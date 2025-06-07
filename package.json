@@ -1,0 +1,23 @@
+{
+  "name": "calorie-bot",
+  "version": "1.0.0",
+  "description": "A Telegram bot for counting calories.",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "keywords": [
+    "telegram",
+    "bot",
+    "calories"
+  ],
+  "author": "AI Agent",
+  "license": "ISC",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.39.0",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "node-telegram-bot-api": "^0.64.0",
+    "openai": "^4.24.1"
+  }
+} 
