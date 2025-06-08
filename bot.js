@@ -699,13 +699,11 @@ const setupBot = (app) => {
                 console.log(`Запрос статистики для пользователя ${telegram_id}, период: ${period}`);
                 console.log(`Диапазон дат: ${startDate.toISOString()} - ${endDate.toISOString()}`);
 
-                // Получаем записи за расширенный период
+                // Получаем ВСЕ записи пользователя (без фильтра по дате)
                 const { data: allMeals, error: mealsError } = await supabase
                     .from('meals')
                     .select('calories, protein, fat, carbs, eaten_at, description')
                     .eq('user_id', profile.id)
-                    .gte('eaten_at', startDate.toISOString())
-                    .lte('eaten_at', endDate.toISOString())
                     .order('eaten_at', { ascending: false });
 
                 if (mealsError) throw mealsError;
