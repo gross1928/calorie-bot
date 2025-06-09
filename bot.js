@@ -50,45 +50,46 @@ const showTyping = async (chat_id, duration = 3000) => {
 
 const streamMessage = async (chat_id, fullText, options = {}) => {
     try {
-        // Разбиваем текст на символы для посимвольного показа
         const chars = fullText.trim().split('');
-        
-        if (chars.length <= 5) {
-            // Если текст очень короткий - отправляем сразу
+        if (chars.length <= 15) { // Короткие сообщения отправляем сразу
             return await bot.sendMessage(chat_id, fullText, options);
         }
-        
-        // Отправляем первый символ БЕЗ курсора для максимальной скорости
-        const sentMessage = await bot.sendMessage(chat_id, chars[0], options);
-        
-        // Постепенно добавляем остальные символы БЕЗ КУРСОРА
-        let accumulatedText = chars[0];
-        
-        for (let i = 1; i < chars.length; i++) {
-            // МГНОВЕННЫЙ вывод без курсора - МАКСИМАЛЬНАЯ СКОРОСТЬ БЕЗ ЛИШНИХ СИМВОЛОВ!
-            await new Promise(resolve => setTimeout(resolve, 0.05 + Math.random() * 0.07));
+
+        // 🚀 ГИБРИДНЫЙ ПОДХОД: Быстрая анимация + умная отправка
+        const UPDATE_INTERVAL_MS = 75; // Обновляем сообщение каждые 75мс
+        let lastUpdateTime = 0;
+        let accumulatedText = '';
+
+        // Отправляем начальное сообщение
+        const sentMessage = await bot.sendMessage(chat_id, '✍️', options);
+        accumulatedText = ''; // Сбрасываем после отправки плейсхолдера
+
+        for (let i = 0; i < chars.length; i++) {
             accumulatedText += chars[i];
-            
-            const displayText = accumulatedText; // БЕЗ КУРСОРА!
-            
-            try {
-                await bot.editMessageText(displayText, {
-                    chat_id: chat_id,
-                    message_id: sentMessage.message_id,
-                    ...options
-                });
-            } catch (editError) {
-                // Если редактирование не удалось, продолжаем - это нормально для быстрого ввода
-                if (!editError.message.includes('message is not modified') && !editError.message.includes('message to edit not found')) {
-                    console.error('Error editing message during streaming:', editError);
+            const now = Date.now();
+
+            // Отправляем обновление, только если прошло достаточно времени или это последний символ
+            if (now - lastUpdateTime > UPDATE_INTERVAL_MS || i === chars.length - 1) {
+                try {
+                    await bot.editMessageText(accumulatedText, {
+                        chat_id: chat_id,
+                        message_id: sentMessage.message_id,
+                        ...options
+                    });
+                    lastUpdateTime = now; // Фиксируем время успешного обновления
+                } catch (editError) {
+                    if (!editError.message.includes('message is not modified')) {
+                        console.warn('Stream hybrid update error:', editError.message);
+                    }
                 }
             }
+             // Микро-пауза, чтобы цикл не был слишком агрессивным для CPU.
+            await new Promise(resolve => setTimeout(resolve, 1));
         }
-        
+
         return sentMessage;
     } catch (error) {
         console.error('Error in streamMessage:', error);
-        // Fallback - отправляем обычное сообщение
         return await bot.sendMessage(chat_id, fullText, options);
     }
 };
@@ -96,8 +97,8 @@ const streamMessage = async (chat_id, fullText, options = {}) => {
 // Убрана функция streamLongMessage - используем только streamMessage для всех сообщений
 
 const shouldUseStreaming = (text) => {
-    // Используем streaming для текстов длиннее 10 символов (посимвольный вывод)
-    return text && typeof text === 'string' && text.trim().length > 10;
+    // Используем streaming для текстов длиннее 15 символов (гибридный вывод)
+    return text && typeof text === 'string' && text.trim().length > 15;
 };
 
 const smartSendMessage = async (chat_id, text, options = {}) => {
