@@ -429,13 +429,11 @@ const processVoiceMessage = async (fileUrl) => {
         const arrayBuffer = await response.arrayBuffer();
         const buffer = Buffer.from(arrayBuffer);
         
-        // Создаем readable stream для OpenAI
-        const { Readable } = require('stream');
-        const audioStream = Readable.from(buffer);
-        audioStream.path = 'voice.oga'; // OpenAI нужно знать расширение файла
+        // Создаем File объект для OpenAI
+        const audioFile = new File([buffer], 'voice.oga', { type: 'audio/ogg' });
         
         const transcription = await openai.audio.transcriptions.create({
-            file: audioStream,
+            file: audioFile,
             model: 'whisper-1',
             language: 'ru',
         });
