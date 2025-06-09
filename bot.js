@@ -2857,6 +2857,13 @@ const setupBot = (app) => {
                         return;
                 }
                 
+                if (!updateField) {
+                    bot.sendMessage(chat_id, '❌ Произошла внутренняя ошибка: не удалось определить поле для обновления.');
+                    console.error(`Update field was not set for state field: ${field}`);
+                    delete profileEditState[telegram_id];
+                    return;
+                }
+                
                 // Обновляем значение в базе данных
                 const { error } = await supabase
                     .from('profiles')
@@ -4380,10 +4387,9 @@ const setupBot = (app) => {
                         fieldName = 'вес';
                         question = 'Введите ваш текущий вес (в кг):';
                         break;
-                    case 'target':
+                    case 'target_weight':
                         fieldName = 'целевой вес';
                         question = 'Введите ваш целевой вес (в кг):';
-                        profileEditState[telegram_id].field = 'target_weight';
                         break;
                     case 'timeframe':
                         fieldName = 'срок достижения цели';
