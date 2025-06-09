@@ -50,26 +50,27 @@ const showTyping = async (chat_id, duration = 3000) => {
 
 const streamMessage = async (chat_id, fullText, options = {}) => {
     try {
-        // Разбиваем текст на слова для постепенного показа
-        const words = fullText.trim().split(/\s+/);
+        // Разбиваем текст на символы для посимвольного показа
+        const chars = fullText.trim().split('');
         
-        if (words.length <= 1) {
-            // Если одно слово или пустой текст - отправляем сразу
+        if (chars.length <= 5) {
+            // Если текст очень короткий - отправляем сразу
             return await bot.sendMessage(chat_id, fullText, options);
         }
         
-        // Отправляем первое слово
-        const sentMessage = await bot.sendMessage(chat_id, words[0] + '...', options);
+        // Отправляем первый символ с курсором
+        const sentMessage = await bot.sendMessage(chat_id, chars[0] + '▌', options);
         
-        // Постепенно добавляем остальные слова
-        let accumulatedText = words[0];
+        // Постепенно добавляем остальные символы
+        let accumulatedText = chars[0];
         
-        for (let i = 1; i < words.length; i++) {
-            await new Promise(resolve => setTimeout(resolve, 800 + Math.random() * 600)); // 800-1400мс задержка между словами для плавного чтения
-            accumulatedText += ' ' + words[i];
+        for (let i = 1; i < chars.length; i++) {
+            // Увеличили скорость в 6 раз: было 800-1400мс между словами, теперь 130-230мс между символами
+            await new Promise(resolve => setTimeout(resolve, 130 + Math.random() * 100));
+            accumulatedText += chars[i];
             
-            const isLast = i === words.length - 1;
-            const displayText = isLast ? accumulatedText : accumulatedText + '...';
+            const isLast = i === chars.length - 1;
+            const displayText = isLast ? accumulatedText : accumulatedText + '▌';
             
             try {
                 await bot.editMessageText(displayText, {
@@ -78,10 +79,9 @@ const streamMessage = async (chat_id, fullText, options = {}) => {
                     ...options
                 });
             } catch (editError) {
-                // Если редактирование не удалось (например, текст не изменился), прерываем
-                if (!editError.message.includes('message is not modified')) {
+                // Если редактирование не удалось, продолжаем - это нормально для быстрого ввода
+                if (!editError.message.includes('message is not modified') && !editError.message.includes('message to edit not found')) {
                     console.error('Error editing message during streaming:', editError);
-                    break;
                 }
             }
         }
@@ -97,8 +97,8 @@ const streamMessage = async (chat_id, fullText, options = {}) => {
 // Убрана функция streamLongMessage - используем только streamMessage для всех сообщений
 
 const shouldUseStreaming = (text) => {
-    // Используем streaming для текстов длиннее 3 слов
-    return text && typeof text === 'string' && text.trim().split(/\s+/).length > 3;
+    // Используем streaming для текстов длиннее 10 символов (посимвольный вывод)
+    return text && typeof text === 'string' && text.trim().length > 10;
 };
 
 const smartSendMessage = async (chat_id, text, options = {}) => {
