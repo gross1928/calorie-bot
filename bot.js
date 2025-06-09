@@ -594,36 +594,47 @@ const analyzeMedicalData = async (medicalText, profileData = null) => {
 const logWorkout = async (telegram_id, workoutData) => {
     try {
         console.log('Logging workout:', workoutData);
+        console.log('Telegram ID:', telegram_id);
 
         // Преобразуем массив упражнений в строку если это массив
         const exercisesString = Array.isArray(workoutData.exercises) 
             ? workoutData.exercises.join(', ') 
             : workoutData.exercises || '';
 
+        console.log('Exercises string:', exercisesString);
+
+        // Сначала попробуем простую запись с минимальными полями
+        const insertData = {
+            telegram_id: String(telegram_id), // Убеждаемся что это строка
+            workout_type: workoutData.workout_type || 'general',
+            duration_minutes: parseInt(workoutData.duration) || 30,
+            date: new Date().toISOString().split('T')[0]
+        };
+
+        console.log('Insert data:', insertData);
+
         const { data, error } = await supabase
             .from('workout_logs')
-            .insert({
-                telegram_id,
-                workout_type: workoutData.workout_type,
-                duration_minutes: workoutData.duration,
-                exercises: exercisesString,
-                intensity: workoutData.intensity,
-                calories_burned: workoutData.calories_burned || null,
-                notes: workoutData.notes || null,
-                date: new Date().toISOString().split('T')[0]
-            });
+            .insert(insertData);
 
         if (error) {
             console.error('Supabase error details:', error);
+            console.error('Error code:', error.code);
+            console.error('Error message:', error.message);
+            console.error('Error hint:', error.hint);
+            console.error('Error details:', error.details);
             console.error('Full error object:', JSON.stringify(error, null, 2));
             throw error;
         }
 
+        console.log('Successfully inserted workout:', data);
         return { success: true, data };
     } catch (error) {
         console.error('Error logging workout:', error);
+        console.error('Error type:', typeof error);
+        console.error('Error constructor:', error.constructor.name);
         console.error('Full error:', JSON.stringify(error, null, 2));
-        return { success: false, error: error.message || JSON.stringify(error) };
+        return { success: false, error: error.message || error.toString() || 'Unknown error' };
     }
 };
 
