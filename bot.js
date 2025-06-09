@@ -663,18 +663,11 @@ const setupBot = (app) => {
             await bot.answerCallbackQuery(callbackQuery.id);
 
             try {
-                console.log(`=== STATS DEBUG ===`);
-                console.log(`Пользователь telegram_id: ${telegram_id}`);
-                console.log(`Период: ${period}`);
-
                 const { data: profile, error: profileError } = await supabase
                     .from('profiles')
                     .select('id, first_name, daily_calories, daily_protein, daily_fat, daily_carbs')
                     .eq('telegram_id', telegram_id)
                     .single();
-
-                console.log(`Профиль пользователя:`, profile);
-                console.log(`Ошибка профиля:`, profileError);
 
                 if (profileError || !profile) {
                     await bot.editMessageText('Не удалось найти ваш профиль. Пожалуйста, попробуйте /start, чтобы всё синхронизировать.', {
@@ -688,59 +681,37 @@ const setupBot = (app) => {
                 else if (period === 'week') periodText = 'эту неделю';
                 else if (period === 'month') periodText = 'этот месяц';
 
-                console.log(`Profile ID для поиска еды: ${profile.id}`);
-
-                // ПРОСТОЙ запрос: получаем ВСЕ записи пользователя
                 const { data: allMeals, error: mealsError } = await supabase
                     .from('meals')
-                    .select('*')
+                    .select('calories, protein, fat, carbs, eaten_at, description')
                     .eq('user_id', profile.id)
                     .order('eaten_at', { ascending: false });
 
-                console.log(`Ошибка получения еды:`, mealsError);
-                console.log(`Всего записей в БД для user_id ${profile.id}:`, allMeals ? allMeals.length : 0);
-                
-                if (allMeals && allMeals.length > 0) {
-                    console.log(`Первые 3 записи:`, allMeals.slice(0, 3));
-                }
-
                 if (mealsError) throw mealsError;
 
-                // Упрощенная фильтрация для "сегодня"
+                // Фильтрация по периоду
                 let meals = allMeals || [];
                 if (period === 'today' && meals.length > 0) {
                     const now = new Date();
                     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
                     const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
                     
-                    console.log(`Фильтрация за сегодня: ${todayStart.toISOString()} - ${todayEnd.toISOString()}`);
-                    
                     meals = allMeals.filter(meal => {
                         const mealDate = new Date(meal.eaten_at);
-                        const isToday = mealDate >= todayStart && mealDate <= todayEnd;
-                        if (isToday) {
-                            console.log(`Найдена еда за сегодня: ${meal.description} - ${meal.eaten_at}`);
-                        }
-                        return isToday;
+                        return mealDate >= todayStart && mealDate <= todayEnd;
                     });
-                    
-                    console.log(`Записей за сегодня: ${meals.length}`);
                 } else if (period === 'week' && meals.length > 0) {
                     const now = new Date();
                     const weekStart = new Date(now);
                     weekStart.setDate(now.getDate() - 7);
                     
                     meals = allMeals.filter(meal => new Date(meal.eaten_at) >= weekStart);
-                    console.log(`Записей за неделю: ${meals.length}`);
                 } else if (period === 'month' && meals.length > 0) {
                     const now = new Date();
                     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
                     
                     meals = allMeals.filter(meal => new Date(meal.eaten_at) >= monthStart);
-                    console.log(`Записей за месяц: ${meals.length}`);
                 }
-
-                console.log(`Итого найдено записей для периода ${period}: ${meals.length}`);
 
                 let statsText;
                 if (!meals || meals.length === 0) {
