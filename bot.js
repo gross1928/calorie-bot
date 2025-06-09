@@ -223,8 +223,8 @@ const generateWorkoutPlan = async (profileData, additionalData) => {
 - Возраст: ${age} лет
 - Рост: ${height_cm} см
 - Текущий вес: ${weight_kg} кг
-${profileData.target_weight_kg ? `- Целевой вес: ${profileData.target_weight_kg} кг` : ''}
-${profileData.timeframe_months ? `- Срок достижения цели: ${profileData.timeframe_months} месяцев` : ''}
+${additionalData.target_weight_kg ? `- Целевой вес: ${additionalData.target_weight_kg} кг` : ''}
+${additionalData.timeframe_months ? `- Срок достижения цели: ${additionalData.timeframe_months} месяцев` : ''}
 - Общая цель: ${goal === 'lose_weight' ? 'похудение' : goal === 'gain_mass' ? 'набор массы' : 'поддержание веса'}
 - Опыт тренировок: ${experience}
 - Цель тренировок: ${workoutGoal}
@@ -611,19 +611,26 @@ const logWorkout = async (telegram_id, workoutData) => {
 
         console.log('Exercises string:', exercisesString);
 
-        // Сначала попробуем простую запись с минимальными полями
+        // Добавляем все необходимые поля для таблицы workout_logs
         const insertData = {
             telegram_id: String(telegram_id), // Убеждаемся что это строка
             workout_type: workoutData.workout_type || 'general',
             duration_minutes: parseInt(workoutData.duration) || 30,
+            exercises: exercisesString, // Добавляем упражнения как строку
+            intensity: workoutData.intensity || 'средняя',
+            calories_burned: parseInt(workoutData.calories_burned) || 0,
+            notes: workoutData.notes || '',
             date: new Date().toISOString().split('T')[0]
         };
 
         console.log('Insert data:', insertData);
 
         const { data, error } = await supabase
-            .from('workout_logs')
-            .insert(insertData);
+            .from('workout_records')
+            .insert({
+                ...insertData,
+                created_at: new Date().toISOString()
+            });
 
         if (error) {
             console.error('Supabase error details:', error);
@@ -2104,7 +2111,7 @@ const setupBot = (app) => {
             try {
                 const { data: profile, error } = await supabase
                     .from('profiles')
-                    .select('id, first_name, gender, age, height_cm, weight_kg, goal, target_weight_kg, timeframe_months')
+                    .select('id, first_name, gender, age, height_cm, weight_kg, goal')
                     .eq('telegram_id', telegram_id)
                     .single();
 
@@ -2134,7 +2141,7 @@ const setupBot = (app) => {
             try {
                 const { data: profile, error } = await supabase
                     .from('profiles')
-                    .select('id, first_name, gender, age, height_cm, weight_kg, goal, daily_calories, daily_protein, daily_fat, daily_carbs, target_weight_kg, timeframe_months')
+                    .select('id, first_name, gender, age, height_cm, weight_kg, goal, daily_calories, daily_protein, daily_fat, daily_carbs')
                     .eq('telegram_id', telegram_id)
                     .single();
 
@@ -2231,7 +2238,7 @@ const setupBot = (app) => {
                     // Получаем профиль пользователя
                     const { data: profile } = await supabase
                         .from('profiles')
-                        .select('first_name, gender, age, height_cm, weight_kg, goal, id, target_weight_kg, timeframe_months')
+                        .select('first_name, gender, age, height_cm, weight_kg, goal, id')
                         .eq('telegram_id', telegram_id)
                         .single();
 
@@ -2528,7 +2535,7 @@ const setupBot = (app) => {
 
                         const { data: profile } = await supabase
                             .from('profiles')
-                            .select('first_name, gender, age, height_cm, weight_kg, goal, id, target_weight_kg, timeframe_months')
+                            .select('first_name, gender, age, height_cm, weight_kg, goal, id')
                             .eq('telegram_id', telegram_id)
                             .single();
 
@@ -2623,7 +2630,7 @@ const setupBot = (app) => {
                 // Получаем профиль пользователя для персонализированного ответа
                 const { data: profile } = await supabase
                     .from('profiles')
-                    .select('first_name, gender, age, height_cm, weight_kg, goal, daily_calories, daily_protein, daily_fat, daily_carbs, target_weight_kg, timeframe_months')
+                    .select('first_name, gender, age, height_cm, weight_kg, goal, daily_calories, daily_protein, daily_fat, daily_carbs')
                     .eq('telegram_id', telegram_id)
                     .single();
 
@@ -2780,7 +2787,7 @@ const setupBot = (app) => {
                     }
                     state.data.weight_kg = weight;
                     state.step = 'ask_goal';
-                    bot.sendMessage(chat_id, 'Теперь: какая у тебя цель?', {
+                    bot.sendMessage(chat_id, 'И последнее: какая у тебя цель?', {
                         reply_markup: {
                             inline_keyboard: [
                                 [{ text: '📉 Похудение', callback_data: 'register_goal_lose' }],
@@ -2790,57 +2797,91 @@ const setupBot = (app) => {
                         }
                     });
                     break;
-                case 'ask_target_weight':
-                    const targetWeight = parseFloat(msg.text.replace(',', '.'));
-                    if (isNaN(targetWeight) || targetWeight <= 20 || targetWeight > 300) {
-                        bot.sendMessage(chat_id, 'Пожалуйста, введи корректный целевой вес (например, 70.5).'); 
-                        return;
-                    }
-                    state.data.target_weight_kg = targetWeight;
-                    state.step = 'ask_timeframe';
-                    bot.sendMessage(chat_id, 'В течение какого времени вы хотите достичь цели? (в месяцах, например: 3)');
-                    break;
-                case 'ask_timeframe':
-                    const timeframe = parseInt(msg.text, 10);
-                    if (isNaN(timeframe) || timeframe < 1 || timeframe > 24) {
-                        bot.sendMessage(chat_id, 'Пожалуйста, введи корректный срок от 1 до 24 месяцев.'); 
-                        return;
-                    }
-                    state.data.timeframe_months = timeframe;
-                    
-                    // Теперь завершаем регистрацию
-                    try {
-                        const { data: newProfile, error } = await supabase.from('profiles').insert([{
-                            telegram_id: state.data.telegram_id,
-                            username: state.data.username,
-                            first_name: state.data.first_name,
-                            last_name: state.data.last_name,
-                            chat_id: state.data.chat_id,
-                            gender: state.data.gender,
-                            age: state.data.age,
-                            height_cm: state.data.height_cm,
-                            weight_kg: state.data.weight_kg,
-                            goal: state.data.goal,
-                            target_weight_kg: state.data.target_weight_kg,
-                            timeframe_months: state.data.timeframe_months
-                        }]).select().single();
+            }
+        }
 
-                        if (error) throw error;
-                        delete registrationState[telegram_id];
-                        await calculateAndSaveNorms(newProfile);
+        // --- Plan State Handlers ---
+        const workoutState = workoutPlanState[telegram_id];
+        const nutritionState = nutritionPlanState[telegram_id];
 
-                        const weightDiff = Math.abs(state.data.target_weight_kg - state.data.weight_kg);
-                        const goalText = state.data.goal === 'lose_weight' ? 'похудеть' : 
-                                       state.data.goal === 'gain_mass' ? 'набрать' : 'поддержать';
-                        
-                        await bot.sendMessage(chat_id, `✅ Отлично! Твой профиль сохранён.\n\n🎯 Твоя цель: ${goalText} ${weightDiff > 0.5 ? `${weightDiff.toFixed(1)} кг` : 'вес'} за ${state.data.timeframe_months} мес.\n\nТеперь я смогу создавать для тебя более точные планы питания и тренировок!`);
-                        
-                        showMainMenu(chat_id, `Теперь ты можешь начать отслеживать калории. Чем займёмся?`);
-                    } catch (dbError) {
-                        console.error('Error saving user profile:', dbError.message);
-                        await bot.sendMessage(chat_id, 'Не удалось сохранить твой профиль. Что-то пошло не так. Попробуй /start еще раз.');
+        if (workoutState) {
+            if (workoutState.step === 'ask_target_weight') {
+                const targetWeight = parseFloat(msg.text.replace(',', '.'));
+                if (isNaN(targetWeight) || targetWeight <= 0 || targetWeight > 300) {
+                    bot.sendMessage(chat_id, 'Пожалуйста, введите корректный вес (число от 1 до 300 кг)');
+                    return;
+                }
+                
+                workoutState.data.target_weight_kg = targetWeight;
+                workoutState.step = 'ask_timeframe';
+                
+                bot.sendMessage(chat_id, `В течение какого времени вы хотите к этому прийти? (в месяцах, например: 6)\n\n**Рекомендуемый темп:**\n• Для похудения: 0.5-1 кг в неделю\n• Для набора: 0.2-0.5 кг в неделю`, {
+                    parse_mode: 'Markdown'
+                });
+                return;
+            }
+            
+            if (workoutState.step === 'ask_timeframe') {
+                const timeframe = parseInt(msg.text);
+                if (isNaN(timeframe) || timeframe <= 0 || timeframe > 24) {
+                    bot.sendMessage(chat_id, 'Пожалуйста, введите корректное время (число от 1 до 24 месяцев)');
+                    return;
+                }
+                
+                workoutState.data.timeframe_months = timeframe;
+                workoutState.step = 'ask_experience';
+                
+                bot.sendMessage(chat_id, 'Теперь расскажите о вашем опыте тренировок:', {
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: 'Новичок (меньше 6 месяцев)', callback_data: 'workout_exp_beginner' }],
+                            [{ text: 'Средний (6 месяцев - 2 года)', callback_data: 'workout_exp_intermediate' }],
+                            [{ text: 'Продвинутый (больше 2 лет)', callback_data: 'workout_exp_advanced' }]
+                        ]
                     }
-                    break;
+                });
+                return;
+            }
+        }
+
+        if (nutritionState) {
+            if (nutritionState.step === 'ask_target_weight') {
+                const targetWeight = parseFloat(msg.text.replace(',', '.'));
+                if (isNaN(targetWeight) || targetWeight <= 0 || targetWeight > 300) {
+                    bot.sendMessage(chat_id, 'Пожалуйста, введите корректный вес (число от 1 до 300 кг)');
+                    return;
+                }
+                
+                nutritionState.data.target_weight_kg = targetWeight;
+                nutritionState.step = 'ask_timeframe';
+                
+                bot.sendMessage(chat_id, `В течение какого времени вы хотите к этому прийти? (в месяцах, например: 6)\n\n**Рекомендуемый темп:**\n• Для похудения: 0.5-1 кг в неделю\n• Для набора: 0.2-0.5 кг в неделю`, {
+                    parse_mode: 'Markdown'
+                });
+                return;
+            }
+            
+            if (nutritionState.step === 'ask_timeframe') {
+                const timeframe = parseInt(msg.text);
+                if (isNaN(timeframe) || timeframe <= 0 || timeframe > 24) {
+                    bot.sendMessage(chat_id, 'Пожалуйста, введите корректное время (число от 1 до 24 месяцев)');
+                    return;
+                }
+                
+                nutritionState.data.timeframe_months = timeframe;
+                nutritionState.step = 'ask_preferences';
+                
+                bot.sendMessage(chat_id, 'Теперь расскажите о ваших пищевых предпочтениях:', {
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: 'Обычное питание', callback_data: 'nutrition_pref_regular' }],
+                            [{ text: 'Вегетарианство', callback_data: 'nutrition_pref_vegetarian' }],
+                            [{ text: 'Веганство', callback_data: 'nutrition_pref_vegan' }],
+                            [{ text: 'Кето-диета', callback_data: 'nutrition_pref_keto' }]
+                        ]
+                    }
+                });
+                return;
             }
         }
 
@@ -2853,7 +2894,7 @@ const setupBot = (app) => {
                 // Получаем профиль пользователя
                 const { data: profile } = await supabase
                     .from('profiles')
-                    .select('first_name, gender, age, height_cm, weight_kg, goal, id, target_weight_kg, timeframe_months')
+                    .select('first_name, gender, age, height_cm, weight_kg, goal, id')
                     .eq('telegram_id', telegram_id)
                     .single();
 
@@ -3284,38 +3325,45 @@ const setupBot = (app) => {
                     // Данных нет, запускаем анкетирование
                     if (planType === 'workout') {
                         workoutPlanState[telegram_id] = { 
-                            step: 'ask_experience', 
+                            step: 'ask_target_weight', 
                             data: { priority_zones: [] },
                             profileData: profile 
                         };
 
-                        await bot.editMessageText('Отлично! Давайте создадим персональный план тренировок 💪\n\nДля начала, какой у вас опыт тренировок?', {
+                        let weightQuestion = '';
+                        if (profile.goal === 'lose_weight') {
+                            weightQuestion = `Для составления эффективного плана тренировок, скажите:\n\n**Какой вес для себя вы считаете идеальным?** (в кг, например: 65.5)\n\nВаш текущий вес: ${profile.weight_kg} кг`;
+                        } else if (profile.goal === 'gain_mass') {
+                            weightQuestion = `Для составления эффективного плана тренировок, скажите:\n\n**До какого веса вы хотите набрать массу?** (в кг, например: 80.5)\n\nВаш текущий вес: ${profile.weight_kg} кг`;
+                        } else {
+                            weightQuestion = `Для составления эффективного плана тренировок, скажите:\n\n**Какой вес для себя вы считаете идеальным для поддержания?** (в кг, например: 70.5)\n\nВаш текущий вес: ${profile.weight_kg} кг`;
+                        }
+
+                        await bot.editMessageText(weightQuestion, {
                             chat_id, message_id: msg.message_id,
-                            reply_markup: {
-                                inline_keyboard: [
-                                    [{ text: 'Новичок (меньше 6 месяцев)', callback_data: 'workout_exp_beginner' }],
-                                    [{ text: 'Средний (6 месяцев - 2 года)', callback_data: 'workout_exp_intermediate' }],
-                                    [{ text: 'Продвинутый (больше 2 лет)', callback_data: 'workout_exp_advanced' }]
-                                ]
-                            }
+                            parse_mode: 'Markdown',
+                            reply_markup: null
                         });
                     } else {
                         nutritionPlanState[telegram_id] = { 
-                            step: 'ask_preferences', 
+                            step: 'ask_target_weight', 
                             data: {},
                             profileData: profile 
                         };
 
-                        await bot.editMessageText('Отлично! Создадим персональный план питания 🍽️\n\nКакие у вас есть пищевые предпочтения?', {
+                        let weightQuestion = '';
+                        if (profile.goal === 'lose_weight') {
+                            weightQuestion = `Для составления эффективного плана питания, скажите:\n\n**Какой вес для себя вы считаете идеальным?** (в кг, например: 65.5)\n\nВаш текущий вес: ${profile.weight_kg} кг`;
+                        } else if (profile.goal === 'gain_mass') {
+                            weightQuestion = `Для составления эффективного плана питания, скажите:\n\n**До какого веса вы хотите набрать массу?** (в кг, например: 80.5)\n\nВаш текущий вес: ${profile.weight_kg} кг`;
+                        } else {
+                            weightQuestion = `Для составления эффективного плана питания, скажите:\n\n**Какой вес для себя вы считаете идеальным для поддержания?** (в кг, например: 70.5)\n\nВаш текущий вес: ${profile.weight_kg} кг`;
+                        }
+
+                        await bot.editMessageText(weightQuestion, {
                             chat_id, message_id: msg.message_id,
-                            reply_markup: {
-                                inline_keyboard: [
-                                    [{ text: 'Обычное питание', callback_data: 'nutrition_pref_regular' }],
-                                    [{ text: 'Вегетарианство', callback_data: 'nutrition_pref_vegetarian' }],
-                                    [{ text: 'Веганство', callback_data: 'nutrition_pref_vegan' }],
-                                    [{ text: 'Кето-диета', callback_data: 'nutrition_pref_keto' }]
-                                ]
-                            }
+                            parse_mode: 'Markdown',
+                            reply_markup: null
                         });
                     }
                 }
@@ -3463,22 +3511,36 @@ const setupBot = (app) => {
             if (state.step === 'ask_goal' && params[0] === 'goal') {
                 const goalMapping = { 'lose': 'lose_weight', 'maintain': 'maintain_weight', 'gain': 'gain_mass' };
                 state.data.goal = goalMapping[value];
-                state.step = 'ask_target_weight';
                 
-                let weightQuestion = '';
-                if (value === 'lose') {
-                    weightQuestion = `Какой вес для себя вы считаете идеальным? (в кг, например: 65.5)\n\nВаш текущий вес: ${state.data.weight_kg} кг`;
-                } else if (value === 'gain') {
-                    weightQuestion = `До какого веса вы хотите набрать массу? (в кг, например: 80.5)\n\nВаш текущий вес: ${state.data.weight_kg} кг`;
-                } else {
-                    weightQuestion = `Какой вес для себя вы считаете идеальным для поддержания? (в кг, например: 70.5)\n\nВаш текущий вес: ${state.data.weight_kg} кг`;
+                try {
+                    const { data: newProfile, error } = await supabase.from('profiles').insert([{
+                        telegram_id: state.data.telegram_id,
+                        username: state.data.username,
+                        first_name: state.data.first_name,
+                        last_name: state.data.last_name,
+                        chat_id: state.data.chat_id,
+                        gender: state.data.gender,
+                        age: state.data.age,
+                        height_cm: state.data.height_cm,
+                        weight_kg: state.data.weight_kg,
+                        goal: state.data.goal
+                    }]).select().single();
+
+                    if (error) throw error;
+                    delete registrationState[telegram_id];
+                    await calculateAndSaveNorms(newProfile);
+
+                    await bot.editMessageText(`✅ Отлично! Твой профиль сохранён.`, {
+                        chat_id: chat_id, message_id: msg.message_id,
+                    });
+                    
+                    showMainMenu(chat_id, `Теперь ты можешь начать отслеживать калории. Чем займёмся?`);
+                } catch (dbError) {
+                    console.error('Error saving user profile:', dbError.message);
+                    await bot.editMessageText('Не удалось сохранить твой профиль. Что-то пошло не так. Попробуй /start еще раз.', {
+                        chat_id: chat_id, message_id: msg.message_id,
+                    });
                 }
-                
-                await bot.editMessageText(weightQuestion, {
-                    chat_id: chat_id, 
-                    message_id: msg.message_id,
-                    reply_markup: null
-                });
                 return;
             }
         }
