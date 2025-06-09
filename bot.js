@@ -1039,7 +1039,7 @@ const setupBot = (app) => {
                     }
                 });
                 state.data.priority_zones = [];
-            } else if (state.step === 'ask_priority_zones' && subAction === 'zone') {
+                        } else if (state.step === 'ask_priority_zones' && subAction === 'zone') {
                 if (value === 'done') {
                     state.step = 'ask_injuries';
                     await bot.editMessageText('Есть ли у вас травмы или заболевания, влияющие на тренировки?', {
@@ -1055,27 +1055,88 @@ const setupBot = (app) => {
                     });
                 } else if (value === 'none') {
                     state.data.priority_zones = ['none'];
-                } else {
-                    if (!state.data.priority_zones.includes(value)) {
-                        state.data.priority_zones.push(value);
-                    }
-                    // Обновляем сообщение с выбранными зонами
-                    const selectedText = state.data.priority_zones.length > 0 ? 
-                        `\n\nВыбрано: ${state.data.priority_zones.join(', ')}` : '';
-                    await bot.editMessageText(`Есть ли приоритетные зоны для проработки? (можно выбрать несколько)${selectedText}`, {
+                    // Переходим сразу к следующему шагу если выбрали "нет приоритетов"
+                    state.step = 'ask_injuries';
+                    await bot.editMessageText('Есть ли у вас травмы или заболевания, влияющие на тренировки?', {
                         chat_id, message_id: msg.message_id,
                         reply_markup: {
                             inline_keyboard: [
-                                [{ text: 'Спина', callback_data: 'workout_zone_back' }, { text: 'Грудь', callback_data: 'workout_zone_chest' }],
-                                [{ text: 'Ноги', callback_data: 'workout_zone_legs' }, { text: 'Плечи', callback_data: 'workout_zone_shoulders' }],
-                                [{ text: 'Кор/Пресс', callback_data: 'workout_zone_core' }, { text: 'Руки', callback_data: 'workout_zone_arms' }],
-                                [{ text: 'Нет приоритетов', callback_data: 'workout_zone_none' }],
+                                [{ text: 'Нет травм', callback_data: 'workout_injury_none' }],
+                                [{ text: 'Проблемы со спиной', callback_data: 'workout_injury_back' }],
+                                [{ text: 'Проблемы с коленями', callback_data: 'workout_injury_knees' }],
+                                [{ text: 'Другие травмы (напишу)', callback_data: 'workout_injury_custom' }]
+                            ]
+                        }
+                    });
+                } else {
+                    // Переключаем выбранную зону
+                    if (state.data.priority_zones.includes(value)) {
+                        // Убираем если уже выбрана
+                        state.data.priority_zones = state.data.priority_zones.filter(zone => zone !== value);
+                    } else {
+                        // Если выбираем конкретную зону, убираем "none"
+                        if (value !== 'none' && state.data.priority_zones.includes('none')) {
+                            state.data.priority_zones = state.data.priority_zones.filter(zone => zone !== 'none');
+                        }
+                        // Если выбираем "none", очищаем все остальные
+                        if (value === 'none') {
+                            state.data.priority_zones = [];
+                        }
+                        // Добавляем если не выбрана
+                        state.data.priority_zones.push(value);
+                    }
+
+                    // Создаем кнопки с эмодзи для выбранных зон
+                    const createZoneButton = (zoneName, zoneValue) => {
+                        const isSelected = state.data.priority_zones.includes(zoneValue);
+                        return { 
+                            text: isSelected ? `✅ ${zoneName}` : zoneName, 
+                            callback_data: `workout_zone_${zoneValue}` 
+                        };
+                    };
+
+                    await bot.editMessageText('Есть ли приоритетные зоны для проработки? (можно выбрать несколько)', {
+                        chat_id, message_id: msg.message_id,
+                        reply_markup: {
+                            inline_keyboard: [
+                                [createZoneButton('Спина', 'back'), createZoneButton('Грудь', 'chest')],
+                                [createZoneButton('Ноги', 'legs'), createZoneButton('Плечи', 'shoulders')],
+                                [createZoneButton('Кор/Пресс', 'core'), createZoneButton('Руки', 'arms')],
+                                [createZoneButton('Нет приоритетов', 'none')],
                                 [{ text: '✅ Готово', callback_data: 'workout_zones_done' }]
                             ]
                         }
-                                         });
-                 }
-             } else if (state.step === 'ask_injuries' && subAction === 'injury') {
+                    });
+                }
+            } else if (action === 'workout' && subAction === 'zones' && value === 'done') {
+                // Обработка кнопки "Готово" для выбора зон
+                await bot.answerCallbackQuery(callbackQuery.id);
+                const state = workoutPlanState[telegram_id];
+                if (!state || state.step !== 'ask_priority_zones') {
+                    await bot.editMessageText('Сессия истекла. Пожалуйста, начните заново.', {
+                        chat_id, message_id: msg.message_id
+                    });
+                    return;
+                }
+
+                // Если ничего не выбрано, устанавливаем "none"
+                if (state.data.priority_zones.length === 0) {
+                    state.data.priority_zones = ['none'];
+                }
+                
+                state.step = 'ask_injuries';
+                await bot.editMessageText('Есть ли у вас травмы или заболевания, влияющие на тренировки?', {
+                    chat_id, message_id: msg.message_id,
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: 'Нет травм', callback_data: 'workout_injury_none' }],
+                            [{ text: 'Проблемы со спиной', callback_data: 'workout_injury_back' }],
+                            [{ text: 'Проблемы с коленями', callback_data: 'workout_injury_knees' }],
+                            [{ text: 'Другие травмы (напишу)', callback_data: 'workout_injury_custom' }]
+                        ]
+                    }
+                });
+            } else if (state.step === 'ask_injuries' && subAction === 'injury') {
                  state.data = { ...state.data, injuries: value };
                  state.step = 'ask_location';
 
