@@ -65,7 +65,7 @@ const streamMessage = async (chat_id, fullText, options = {}) => {
         let accumulatedText = words[0];
         
         for (let i = 1; i < words.length; i++) {
-            await new Promise(resolve => setTimeout(resolve, 200 + Math.random() * 300)); // 200-500мс задержка между словами
+            await new Promise(resolve => setTimeout(resolve, 800 + Math.random() * 600)); // 800-1400мс задержка между словами для плавного чтения
             accumulatedText += ' ' + words[i];
             
             const isLast = i === words.length - 1;
@@ -466,23 +466,27 @@ const answerUserQuestionStream = async (chat_id, message_id, question, profileDa
         });
 
         let fullResponse = '';
-        let lastUpdateTime = 0;
-        const updateInterval = 800; // мс
+        let sentMessage = null;
         const initialText = `🎤 **Ваш вопрос:** "${question}"\n\n`;
 
         for await (const chunk of stream) {
             const content = chunk.choices[0]?.delta?.content || '';
             if (content) {
                 fullResponse += content;
-                const now = Date.now();
-                if (now - lastUpdateTime > updateInterval) {
+                
+                // Если ещё не отправили сообщение, отправляем первый кусок
+                if (!sentMessage && fullResponse.length > 10) {
+                    sentMessage = await bot.sendMessage(chat_id, initialText + fullResponse + '▌', {
+                        parse_mode: 'Markdown'
+                    });
+                } else if (sentMessage) {
+                    // Обновляем существующее сообщение
                     try {
                         await bot.editMessageText(initialText + fullResponse + '▌', {
                             chat_id: chat_id,
-                            message_id: message_id,
+                            message_id: sentMessage.message_id,
                             parse_mode: 'Markdown'
                         });
-                        lastUpdateTime = now;
                     } catch (error) {
                         if (!error.message.includes('message is not modified')) {
                             console.warn('Промежуточная ошибка при обновлении сообщения (Markdown):', error.message);
@@ -493,16 +497,23 @@ const answerUserQuestionStream = async (chat_id, message_id, question, profileDa
         }
 
         // Финальное обновление с полным ответом (убираем курсор)
-        try {
-            await bot.editMessageText(initialText + fullResponse, {
-                chat_id: chat_id,
-                message_id: message_id,
+        if (sentMessage) {
+            try {
+                await bot.editMessageText(initialText + fullResponse, {
+                    chat_id: chat_id,
+                    message_id: sentMessage.message_id,
+                    parse_mode: 'Markdown'
+                });
+            } catch (error) {
+                if (!error.message.includes('message is not modified')) {
+                    console.warn('Ошибка финального обновления сообщения:', error.message);
+                }
+            }
+        } else {
+            // Если так и не отправили сообщение, отправляем сейчас
+            await bot.sendMessage(chat_id, initialText + fullResponse, {
                 parse_mode: 'Markdown'
             });
-        } catch (error) {
-            if (!error.message.includes('message is not modified')) {
-                console.warn('Ошибка финального обновления сообщения:', error.message);
-            }
         }
 
         return { success: true };
@@ -510,10 +521,7 @@ const answerUserQuestionStream = async (chat_id, message_id, question, profileDa
     } catch (error) {
         console.error('Критическая ошибка в answerUserQuestionStream:', error);
         try {
-            await bot.editMessageText(`Произошла ошибка при генерации ответа. Пожалуйста, попробуйте еще раз.`, {
-                chat_id: chat_id,
-                message_id: message_id
-            });
+            await bot.sendMessage(chat_id, `Произошла ошибка при генерации ответа. Пожалуйста, попробуйте еще раз.`);
         } catch (e) {
             console.error('Не удалось отправить сообщение об ошибке пользователю:', e);
         }
@@ -2379,8 +2387,8 @@ const setupBot = (app) => {
                 setTimeout(async () => {
                     try {
                         await bot.editMessageText('📸 Распознаю блюда на фото...', {
-                            chat_id: thinkingMessage.chat.id,
-                            message_id: thinkingMessage.message_id
+                            chat_id: chat_id,
+                            message_id: undefined
                         });
                     } catch (e) { /* игнорируем ошибки обновления */ }
                 }, 2000);
@@ -2388,8 +2396,8 @@ const setupBot = (app) => {
                 setTimeout(async () => {
                     try {
                         await bot.editMessageText('📸 Анализирую состав и калорийность...', {
-                            chat_id: thinkingMessage.chat.id,
-                            message_id: thinkingMessage.message_id
+                            chat_id: chat_id,
+                            message_id: undefined
                         });
                     } catch (e) { /* игнорируем ошибки обновления */ }
                 }, 6000);
@@ -2408,8 +2416,8 @@ const setupBot = (app) => {
                     const responseText = `*${mealData.dish_name}* (Примерно ${mealData.weight_g} г)\n\n*Ингредиенты:* ${ingredientsString}\n*КБЖУ:*\n- Калории: ${mealData.calories} ккал\n- Белки: ${mealData.protein} г\n- Жиры: ${mealData.fat} г\n- Углеводы: ${mealData.carbs} г\n\nСохранить этот приём пищи?`;
 
                     await bot.editMessageText(responseText, {
-                        chat_id: thinkingMessage.chat.id,
-                        message_id: thinkingMessage.message_id,
+                        chat_id: chat_id,
+                        message_id: undefined,
                         parse_mode: 'Markdown',
                         reply_markup: {
                             inline_keyboard: [
@@ -2419,15 +2427,15 @@ const setupBot = (app) => {
                     });
                 } else {
                      await bot.editMessageText(`😕 ${recognitionResult.reason}`, {
-                        chat_id: thinkingMessage.chat.id,
-                        message_id: thinkingMessage.message_id
+                        chat_id: chat_id,
+                        message_id: undefined
                     });
                 }
             } catch (error) {
                 console.error("Ошибка при обработке фото:", error);
                 await bot.editMessageText('Произошла внутренняя ошибка. Не удалось обработать фото.', {
-                    chat_id: thinkingMessage.chat.id,
-                    message_id: thinkingMessage.message_id
+                    chat_id: chat_id,
+                    message_id: undefined
                 });
             }
             return;
@@ -2437,9 +2445,6 @@ const setupBot = (app) => {
         if (msg.voice) {
             // СРАЗУ показываем индикатор печатания
             await bot.sendChatAction(chat_id, 'typing');
-            showTyping(chat_id, 20000);
-            
-            const thinkingMessage = await bot.sendMessage(chat_id, '🎤 Получил голосовое сообщение! Преобразую речь в текст...');
             try {
                 const voice = msg.voice;
                 const fileInfo = await bot.getFile(voice.file_id);
@@ -2448,10 +2453,7 @@ const setupBot = (app) => {
                 const transcriptionResult = await processVoiceMessage(voiceUrl);
                 
                 if (transcriptionResult.success) {
-                    await bot.editMessageText(`🎤 Обрабатываю сообщение: "${transcriptionResult.text}"`, {
-                        chat_id: thinkingMessage.chat.id,
-                        message_id: thinkingMessage.message_id
-                    });
+                    // Убираем промежуточное сообщение - сразу обрабатываем результат
 
                     // Получаем профиль пользователя
                     const { data: profile } = await supabase
@@ -2483,9 +2485,7 @@ const setupBot = (app) => {
 
                                     const responseText = `🎤 **Распознанная еда:** ${mealData.dish_name}\n\n*Ингредиенты:* ${ingredientsString}\n*КБЖУ:*\n- Калории: ${mealData.calories} ккал\n- Белки: ${mealData.protein} г\n- Жиры: ${mealData.fat} г\n- Углеводы: ${mealData.carbs} г\n\nСохранить этот приём пищи?`;
 
-                                    await bot.editMessageText(responseText, {
-                                        chat_id: thinkingMessage.chat.id,
-                                        message_id: thinkingMessage.message_id,
+                                    await bot.sendMessage(chat_id, responseText, {
                                         parse_mode: 'Markdown',
                                         reply_markup: {
                                             inline_keyboard: [
@@ -2494,11 +2494,7 @@ const setupBot = (app) => {
                                         }
                                     });
                                 } else {
-                                    await bot.editMessageText(analysisData.response_text, {
-                                        chat_id: thinkingMessage.chat.id,
-                                        message_id: thinkingMessage.message_id,
-                                        parse_mode: 'Markdown'
-                                    });
+                                    await bot.sendMessage(chat_id, analysisData.response_text, { parse_mode: 'Markdown' });
                                 }
                                 break;
 
@@ -2526,23 +2522,12 @@ const setupBot = (app) => {
                                             responseText += `💪 Осталось: ${remaining} мл до нормы`;
                                         }
                                         
-                                        await bot.editMessageText(responseText, {
-                                            chat_id: thinkingMessage.chat.id,
-                                            message_id: thinkingMessage.message_id,
-                                            parse_mode: 'Markdown'
-                                        });
+                                        await bot.sendMessage(chat_id, responseText, { parse_mode: 'Markdown' });
                                     } else {
-                                        await bot.editMessageText(`❌ Ошибка при добавлении воды: ${result.error}`, {
-                                            chat_id: thinkingMessage.chat.id,
-                                            message_id: thinkingMessage.message_id
-                                        });
+                                        await bot.sendMessage(chat_id, `❌ Ошибка при добавлении воды: ${result.error}`);
                                     }
                                 } else {
-                                    await bot.editMessageText(analysisData.response_text, {
-                                        chat_id: thinkingMessage.chat.id,
-                                        message_id: thinkingMessage.message_id,
-                                        parse_mode: 'Markdown'
-                                    });
+                                    await bot.sendMessage(chat_id, analysisData.response_text, { parse_mode: 'Markdown' });
                                 }
                                 break;
 
@@ -2622,14 +2607,14 @@ const setupBot = (app) => {
                                     responseText += `🎉 Отличная работа! Так держать! 💪`;
 
                                     await bot.editMessageText(responseText, {
-                                        chat_id: thinkingMessage.chat.id,
-                                        message_id: thinkingMessage.message_id,
+                                        chat_id: chat_id,
+                                        message_id: undefined,
                                         parse_mode: 'Markdown'
                                     });
                                 } else {
                                     await bot.editMessageText(`❌ Ошибка при сохранении тренировки: ${result.error}`, {
-                                        chat_id: thinkingMessage.chat.id,
-                                        message_id: thinkingMessage.message_id
+                                        chat_id: chat_id,
+                                        message_id: undefined
                                     });
                                 }
                                 break;
@@ -2639,16 +2624,9 @@ const setupBot = (app) => {
                                 const report = await generateDailyReport(telegram_id);
                                 
                                 if (report.success) {
-                                    await bot.editMessageText(report.text, {
-                                        chat_id: thinkingMessage.chat.id,
-                                        message_id: thinkingMessage.message_id,
-                                        parse_mode: 'Markdown'
-                                    });
+                                    await bot.sendMessage(chat_id, report.text, { parse_mode: 'Markdown' });
                                 } else {
-                                    await bot.editMessageText('❌ Не удалось сгенерировать отчет. Возможно, у вас нет данных за сегодня.', {
-                                        chat_id: thinkingMessage.chat.id,
-                                        message_id: thinkingMessage.message_id
-                                    });
+                                    await bot.sendMessage(chat_id, '❌ Не удалось сгенерировать отчет. Возможно, у вас нет данных за сегодня.');
                                 }
                                 break;
 
@@ -2668,59 +2646,36 @@ const setupBot = (app) => {
                                     
                                     responseText += `*Это рекомендации ИИ, не замена консультации врача.*`;
 
-                                    await bot.editMessageText(responseText, {
-                                        chat_id: thinkingMessage.chat.id,
-                                        message_id: thinkingMessage.message_id,
-                                        parse_mode: 'Markdown'
-                                    });
+                                    await bot.sendMessage(chat_id, responseText, { parse_mode: 'Markdown' });
                                 } else {
-                                    await bot.editMessageText(analysisData.response_text, {
-                                        chat_id: thinkingMessage.chat.id,
-                                        message_id: thinkingMessage.message_id,
-                                        parse_mode: 'Markdown'
-                                    });
+                                    await bot.sendMessage(chat_id, analysisData.response_text, { parse_mode: 'Markdown' });
                                 }
                                 break;
 
-                            case 'answer_question':
-                                // Отвечаем на вопрос в потоковом режиме
-                                await answerUserQuestionStream(thinkingMessage.chat.id, thinkingMessage.message_id, transcriptionResult.text, profile);
-                                break;
+                                                    case 'answer_question':
+                            // Отвечаем на вопрос в потоковом режиме
+                            await answerUserQuestionStream(chat_id, null, transcriptionResult.text, profile);
+                            break;
 
-                            default:
-                                // Все остальные случаи - дружелюбный ответ с потоковым выводом
-                                const fullResponse = `🎤 **Услышал:** "${transcriptionResult.text}"\n\n${analysisData.response_text}`;
-                                if (shouldUseStreaming(fullResponse)) {
-                                    await bot.deleteMessage(thinkingMessage.chat.id, thinkingMessage.message_id);
-                                    await streamMessage(chat_id, fullResponse, { parse_mode: 'Markdown' });
-                                } else {
-                                    await bot.editMessageText(fullResponse, {
-                                        chat_id: thinkingMessage.chat.id,
-                                        message_id: thinkingMessage.message_id,
-                                        parse_mode: 'Markdown'
-                                    });
-                                }
-                                break;
+                        default:
+                            // Все остальные случаи - дружелюбный ответ с потоковым выводом
+                            const fullResponse = `🎤 **Услышал:** "${transcriptionResult.text}"\n\n${analysisData.response_text}`;
+                            if (shouldUseStreaming(fullResponse)) {
+                                await streamMessage(chat_id, fullResponse, { parse_mode: 'Markdown' });
+                            } else {
+                                await bot.sendMessage(chat_id, fullResponse, { parse_mode: 'Markdown' });
+                            }
+                            break;
                         }
                     } else {
-                        await bot.editMessageText(`🎤 **Распознано:** "${transcriptionResult.text}"\n\nИзвините, не смог понять ваше сообщение.`, {
-                            chat_id: thinkingMessage.chat.id,
-                            message_id: thinkingMessage.message_id,
-                            parse_mode: 'Markdown'
-                        });
+                        await bot.sendMessage(chat_id, `🎤 **Распознано:** "${transcriptionResult.text}"\n\nИзвините, не смог понять ваше сообщение.`, { parse_mode: 'Markdown' });
                     }
                 } else {
-                    await bot.editMessageText(`❌ ${transcriptionResult.error}`, {
-                        chat_id: thinkingMessage.chat.id,
-                        message_id: thinkingMessage.message_id
-                    });
+                    await bot.sendMessage(chat_id, `❌ ${transcriptionResult.error}`);
                 }
             } catch (error) {
                 console.error("Ошибка при обработке голосового сообщения:", error);
-                await bot.editMessageText('Произошла ошибка при обработке голосового сообщения.', {
-                    chat_id: thinkingMessage.chat.id,
-                    message_id: thinkingMessage.message_id
-                });
+                await bot.sendMessage(chat_id, 'Произошла ошибка при обработке голосового сообщения.');
             }
             return;
         }
@@ -2729,9 +2684,6 @@ const setupBot = (app) => {
         if (msg.document) {
             // СРАЗУ показываем индикатор печатания
             await bot.sendChatAction(chat_id, 'typing');
-            showTyping(chat_id, 15000);
-            
-            const thinkingMessage = await bot.sendMessage(chat_id, '📄 Получил документ! Анализирую содержимое...');
             try {
                 const document = msg.document;
                 const fileInfo = await bot.getFile(document.file_id);
@@ -2743,8 +2695,8 @@ const setupBot = (app) => {
                     
                     if (extractionResult.success) {
                         await bot.editMessageText(`📄 Анализирую извлеченный текст...`, {
-                            chat_id: thinkingMessage.chat.id,
-                            message_id: thinkingMessage.message_id
+                            chat_id: chat_id,
+                            message_id: undefined
                         });
 
                         const { data: profile } = await supabase
@@ -2778,14 +2730,14 @@ const setupBot = (app) => {
                                         responseText += `*Это рекомендации ИИ, не замена консультации врача.*`;
 
                                         await bot.editMessageText(responseText, {
-                                            chat_id: thinkingMessage.chat.id,
-                                            message_id: thinkingMessage.message_id,
+                                            chat_id: chat_id,
+                                            message_id: undefined,
                                             parse_mode: 'Markdown'
                                         });
                                     } else {
                                         await bot.editMessageText(`📄 **Извлеченный текст:**\n\n${extractionResult.text.substring(0, 800)}${extractionResult.text.length > 800 ? '...' : ''}\n\n${analysisData.response_text}`, {
-                                            chat_id: thinkingMessage.chat.id,
-                                            message_id: thinkingMessage.message_id,
+                                            chat_id: chat_id,
+                                            message_id: undefined,
                                             parse_mode: 'Markdown'
                                         });
                                     }
@@ -2794,36 +2746,36 @@ const setupBot = (app) => {
                                 default:
                                     // Другие типы документов
                                     await bot.editMessageText(`📄 **Извлеченный текст:**\n\n${extractionResult.text.substring(0, 800)}${extractionResult.text.length > 800 ? '...' : ''}\n\n${analysisData.response_text}`, {
-                                        chat_id: thinkingMessage.chat.id,
-                                        message_id: thinkingMessage.message_id,
+                                        chat_id: chat_id,
+                                        message_id: undefined,
                                         parse_mode: 'Markdown'
                                     });
                                     break;
                             }
                         } else {
                             await bot.editMessageText(`📄 **Извлеченный текст:**\n\n${extractionResult.text.substring(0, 1000)}${extractionResult.text.length > 1000 ? '...' : ''}`, {
-                                chat_id: thinkingMessage.chat.id,
-                                message_id: thinkingMessage.message_id,
+                                chat_id: chat_id,
+                                message_id: undefined,
                                 parse_mode: 'Markdown'
                             });
                         }
                     } else {
                         await bot.editMessageText(`❌ ${extractionResult.error}`, {
-                            chat_id: thinkingMessage.chat.id,
-                            message_id: thinkingMessage.message_id
+                            chat_id: chat_id,
+                            message_id: undefined
                         });
                     }
                 } else {
                     await bot.editMessageText('Пока поддерживаются только изображения документов. Попробуйте отправить фото анализа.', {
-                        chat_id: thinkingMessage.chat.id,
-                        message_id: thinkingMessage.message_id
+                        chat_id: chat_id,
+                        message_id: undefined
                     });
                 }
             } catch (error) {
                 console.error("Ошибка при обработке документа:", error);
                 await bot.editMessageText('Произошла ошибка при обработке документа.', {
-                    chat_id: thinkingMessage.chat.id,
-                    message_id: thinkingMessage.message_id
+                    chat_id: chat_id,
+                    message_id: undefined
                 });
             }
             return;
@@ -2842,9 +2794,6 @@ const setupBot = (app) => {
             
             // СРАЗУ показываем индикатор печатания
             await bot.sendChatAction(chat_id, 'typing');
-            showTyping(chat_id, 15000);
-            
-            const thinkingMessage = await bot.sendMessage(chat_id, '🤔 Думаю над вашим вопросом...');
             
             try {
                 // Получаем профиль пользователя для персонализированного ответа
@@ -2854,14 +2803,12 @@ const setupBot = (app) => {
                     .eq('telegram_id', telegram_id)
                     .single();
 
-                await answerUserQuestionStream(thinkingMessage.chat.id, thinkingMessage.message_id, msg.text, profile);
+                // Сразу переходим к потоковому ответу без промежуточного сообщения
+                await answerUserQuestionStream(chat_id, null, msg.text, profile);
 
             } catch (error) {
                 console.error("Error answering user question:", error);
-                await bot.editMessageText('🤖 Извините, произошла ошибка при обработке вашего вопроса. Попробуйте еще раз или используйте основные функции бота.', {
-                    chat_id: thinkingMessage.chat.id,
-                    message_id: thinkingMessage.message_id
-                });
+                await bot.sendMessage(chat_id, '🤖 Извините, произошла ошибка при обработке вашего вопроса. Попробуйте еще раз или используйте основные функции бота.');
             }
             return;
         }
@@ -3028,7 +2975,7 @@ const setupBot = (app) => {
                 const weight = parseInt(parts[1], 10);
                 if (parts.length !== 2 || !description || isNaN(weight) || weight <= 0) {
                      await bot.editMessageText('Неверный формат. Пожалуйста, введите данные в формате: `Название, Граммы`.\n\nНапример: `Гречка с курицей, 150`', {
-                        chat_id: thinkingMessage.chat.id, message_id: thinkingMessage.message_id, parse_mode: 'Markdown'
+                        chat_id: chat_id, message_id: undefined, parse_mode: 'Markdown'
                     });
                     return;
                 }
@@ -3046,7 +2993,7 @@ const setupBot = (app) => {
                     const responseText = `*${mealData.dish_name}* (Примерно ${mealData.weight_g} г)\n\n*Ингредиенты:* ${ingredientsString}\n*КБЖУ:*\n- Калории: ${mealData.calories} ккал\n- Белки: ${mealData.protein} г\n- Жиры: ${mealData.fat} г\n- Углеводы: ${mealData.carbs} г\n\nСохранить этот приём пищи?`;
 
                     await bot.editMessageText(responseText, {
-                        chat_id: thinkingMessage.chat.id, message_id: thinkingMessage.message_id, parse_mode: 'Markdown',
+                        chat_id: chat_id, message_id: undefined, parse_mode: 'Markdown',
                         reply_markup: {
                             inline_keyboard: [
                                 [{ text: '✅ Да, сохранить', callback_data }, { text: '❌ Нет, отменить', callback_data: cancel_callback_data }]
@@ -3055,13 +3002,13 @@ const setupBot = (app) => {
                     });
                 } else {
                      await bot.editMessageText(`😕 ${recognitionResult.reason}`, {
-                        chat_id: thinkingMessage.chat.id, message_id: thinkingMessage.message_id
+                        chat_id: chat_id, message_id: undefined
                     });
                 }
             } catch (error) {
                 console.error("Ошибка при обработке ручного ввода:", error);
                 await bot.editMessageText('Произошла внутренняя ошибка. Не удалось обработать ваш запрос.', {
-                    chat_id: thinkingMessage.chat.id, message_id: thinkingMessage.message_id
+                    chat_id: chat_id, message_id: undefined
                 });
             }
             return;
@@ -3217,9 +3164,6 @@ const setupBot = (app) => {
         if (msg.text && !msg.text.startsWith('/')) {
             // СРАЗУ показываем индикатор печатания
             await bot.sendChatAction(chat_id, 'typing');
-            showTyping(chat_id, 15000);
-            
-            const thinkingMessage = await bot.sendMessage(chat_id, '🤔 Анализирую ваше сообщение...');
             
             try {
                 // Получаем профиль пользователя
@@ -3253,8 +3197,8 @@ const setupBot = (app) => {
                                 const responseText = `💬 **Распознанная еда:** ${mealData.dish_name}\n\n*Ингредиенты:* ${ingredientsString}\n*КБЖУ:*\n- Калории: ${mealData.calories} ккал\n- Белки: ${mealData.protein} г\n- Жиры: ${mealData.fat} г\n- Углеводы: ${mealData.carbs} г\n\nСохранить этот приём пищи?`;
 
                                 await bot.editMessageText(responseText, {
-                                    chat_id: thinkingMessage.chat.id,
-                                    message_id: thinkingMessage.message_id,
+                                    chat_id: chat_id,
+                                    message_id: undefined,
                                     parse_mode: 'Markdown',
                                     reply_markup: {
                                         inline_keyboard: [
@@ -3264,8 +3208,8 @@ const setupBot = (app) => {
                                 });
                             } else {
                                 await bot.editMessageText(analysisData.response_text, {
-                                    chat_id: thinkingMessage.chat.id,
-                                    message_id: thinkingMessage.message_id,
+                                    chat_id: chat_id,
+                                    message_id: undefined,
                                     parse_mode: 'Markdown'
                                 });
                             }
@@ -3296,20 +3240,20 @@ const setupBot = (app) => {
                                     }
                                     
                                     await bot.editMessageText(responseText, {
-                                        chat_id: thinkingMessage.chat.id,
-                                        message_id: thinkingMessage.message_id,
+                                        chat_id: chat_id,
+                                        message_id: undefined,
                                         parse_mode: 'Markdown'
                                     });
                                 } else {
                                     await bot.editMessageText(`❌ Ошибка при добавлении воды: ${result.error}`, {
-                                        chat_id: thinkingMessage.chat.id,
-                                        message_id: thinkingMessage.message_id
+                                        chat_id: chat_id,
+                                        message_id: undefined
                                     });
                                 }
                             } else {
                                 await bot.editMessageText(analysisData.response_text, {
-                                    chat_id: thinkingMessage.chat.id,
-                                    message_id: thinkingMessage.message_id,
+                                    chat_id: chat_id,
+                                    message_id: undefined,
                                     parse_mode: 'Markdown'
                                 });
                             }
@@ -3391,14 +3335,14 @@ const setupBot = (app) => {
                                 responseText += `🎉 Отличная работа! Так держать! 💪`;
 
                                 await bot.editMessageText(responseText, {
-                                    chat_id: thinkingMessage.chat.id,
-                                    message_id: thinkingMessage.message_id,
+                                    chat_id: chat_id,
+                                    message_id: undefined,
                                     parse_mode: 'Markdown'
                                 });
                             } else {
                                 await bot.editMessageText(`❌ Ошибка при сохранении тренировки: ${result.error}`, {
-                                    chat_id: thinkingMessage.chat.id,
-                                    message_id: thinkingMessage.message_id
+                                    chat_id: chat_id,
+                                    message_id: undefined
                                 });
                             }
                             break;
@@ -3409,14 +3353,14 @@ const setupBot = (app) => {
                             
                             if (report.success) {
                                 await bot.editMessageText(report.text, {
-                                    chat_id: thinkingMessage.chat.id,
-                                    message_id: thinkingMessage.message_id,
+                                    chat_id: chat_id,
+                                    message_id: undefined,
                                     parse_mode: 'Markdown'
                                 });
                             } else {
                                 await bot.editMessageText('❌ Не удалось сгенерировать отчет. Возможно, у вас нет данных за сегодня.', {
-                                    chat_id: thinkingMessage.chat.id,
-                                    message_id: thinkingMessage.message_id
+                                    chat_id: chat_id,
+                                    message_id: undefined
                                 });
                             }
                             break;
@@ -3438,14 +3382,14 @@ const setupBot = (app) => {
                                 responseText += `*Это рекомендации ИИ, не замена консультации врача.*`;
 
                                 await bot.editMessageText(responseText, {
-                                    chat_id: thinkingMessage.chat.id,
-                                    message_id: thinkingMessage.message_id,
+                                    chat_id: chat_id,
+                                    message_id: undefined,
                                     parse_mode: 'Markdown'
                                 });
                             } else {
                                 await bot.editMessageText(analysisData.response_text, {
-                                    chat_id: thinkingMessage.chat.id,
-                                    message_id: thinkingMessage.message_id,
+                                    chat_id: chat_id,
+                                    message_id: undefined,
                                     parse_mode: 'Markdown'
                                 });
                             }
@@ -3453,34 +3397,29 @@ const setupBot = (app) => {
 
                         case 'answer_question':
                             // Отвечаем на вопрос в потоковом режиме
-                            await answerUserQuestionStream(thinkingMessage.chat.id, thinkingMessage.message_id, msg.text, profile);
+                            await answerUserQuestionStream(chat_id, null, msg.text, profile);
                             break;
 
                         default:
                             // Все остальные случаи - дружелюбный ответ с потоковым выводом
                             if (shouldUseStreaming(analysisData.response_text)) {
-                                await bot.deleteMessage(thinkingMessage.chat.id, thinkingMessage.message_id);
                                 await streamMessage(chat_id, analysisData.response_text, { parse_mode: 'Markdown' });
                             } else {
-                                await bot.editMessageText(analysisData.response_text, {
-                                    chat_id: thinkingMessage.chat.id,
-                                    message_id: thinkingMessage.message_id,
-                                    parse_mode: 'Markdown'
-                                });
+                                await bot.sendMessage(chat_id, analysisData.response_text, { parse_mode: 'Markdown' });
                             }
                             break;
                     }
                 } else {
                     await bot.editMessageText('Извините, не смог понять ваше сообщение. Попробуйте использовать основные функции бота через меню.', {
-                        chat_id: thinkingMessage.chat.id,
-                        message_id: thinkingMessage.message_id
+                        chat_id: chat_id,
+                        message_id: undefined
                     });
                 }
             } catch (error) {
                 console.error("Ошибка при обработке текстового сообщения:", error);
                 await bot.editMessageText('Произошла ошибка при обработке сообщения.', {
-                    chat_id: thinkingMessage.chat.id,
-                    message_id: thinkingMessage.message_id
+                    chat_id: chat_id,
+                    message_id: undefined
                 });
             }
         }
