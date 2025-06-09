@@ -65,8 +65,8 @@ const streamMessage = async (chat_id, fullText, options = {}) => {
         let accumulatedText = chars[0];
         
         for (let i = 1; i < chars.length; i++) {
-            // Увеличили скорость еще в 6 раз: теперь 22-38мс между символами для супер-быстрого эффекта
-            await new Promise(resolve => setTimeout(resolve, 22 + Math.random() * 16));
+            // Супер-быстрый вывод как в "Матрице": 5-12мс между символами - человек не успевает обрабатывать!
+            await new Promise(resolve => setTimeout(resolve, 5 + Math.random() * 7));
             accumulatedText += chars[i];
             
             const isLast = i === chars.length - 1;
@@ -3969,12 +3969,30 @@ const setupBot = (app) => {
 
                     const { daily_calories, daily_protein, daily_fat, daily_carbs } = profile;
                     
+                    // Рассчитываем данные для прогресс-баров долгосрочного трекинга
                     let dailyAverageText = '';
+                    let totalCaloriesNormText = '';
+                    let totalWaterNormText = '';
+                    
                     if (period !== 'today') {
-                         const dayDifference = (new Date().getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24);
-                         const daysInPeriod = Math.max(1, Math.ceil(dayDifference));
+                         // Рассчитываем количество дней
+                         let daysInPeriod = 1;
+                         if (period === 'week') {
+                             daysInPeriod = 7;
+                         } else if (period === 'month') {
+                             const now = new Date();
+                             daysInPeriod = now.getDate(); // дни с начала месяца
+                         }
+                         
                          const avgCalories = totals.calories / daysInPeriod;
                          dailyAverageText = `📈 Среднесуточно: *${avgCalories.toFixed(0)} ккал/день*\n\n`;
+                         
+                         // Общий трекер калорий за период
+                         const totalCaloriesNorm = daily_calories * daysInPeriod;
+                         const caloriesPercentage = Math.round((totals.calories / totalCaloriesNorm) * 100);
+                         totalCaloriesNormText = `\n🎯 **Общий прогресс калорий за ${periodText}:**\n` +
+                                               `${totals.calories.toFixed(0)} / ${totalCaloriesNorm} ккал (${caloriesPercentage}%)\n` +
+                                               `${createProgressBar(totals.calories, totalCaloriesNorm)}\n`;
                     }
 
                     // Получаем статистику воды
@@ -3993,21 +4011,38 @@ const setupBot = (app) => {
                             if (daysWithData > 0) {
                                 const avgDaily = Math.round(waterStats.totalWater / Math.max(daysWithData, 1));
                                 const avgPercentage = Math.round((avgDaily / waterStats.waterNorm) * 100);
-                                waterText = `\n\n💧 Вода: *${waterStats.totalWater} мл всего (${avgDaily} мл/день)*\n` +
-                                           `Выполнение нормы: ${avgPercentage}%`;
+                                
+                                // Общий трекер воды за период
+                                let daysInPeriod = 1;
+                                if (period === 'week') {
+                                    daysInPeriod = 7;
+                                } else if (period === 'month') {
+                                    const now = new Date();
+                                    daysInPeriod = now.getDate();
+                                }
+                                const totalWaterNorm = waterStats.waterNorm * daysInPeriod;
+                                const totalWaterPercentage = Math.round((waterStats.totalWater / totalWaterNorm) * 100);
+                                
+                                totalWaterNormText = `\n🎯 **Общий прогресс воды за ${periodText}:**\n` +
+                                                   `${waterStats.totalWater} / ${totalWaterNorm} мл (${totalWaterPercentage}%)\n` +
+                                                   `${createProgressBar(waterStats.totalWater, totalWaterNorm)}\n`;
+                                
+                                waterText = `\n\n💧 Вода среднесуточно: *${avgDaily} мл/день (${avgPercentage}% от нормы)*`;
                             }
                         }
                     }
 
                     statsText = `*Статистика за ${periodText}, ${profile.first_name}:*\n\n` +
                                 `🔥 Калории: *${formatLine(totals.calories, daily_calories)}ккал*\n` +
-                                `${createProgressBar(totals.calories, daily_calories)}\n\n` +
+                                (period === 'today' ? `${createProgressBar(totals.calories, daily_calories)}\n\n` : '') +
                                 (period === 'today' ? '' : dailyAverageText) +
-                                `*Общее количество БЖУ:*\n` +
+                                totalCaloriesNormText +
+                                `\n*Общее количество БЖУ:*\n` +
                                 `🥩 Белки: ${formatLine(totals.protein, daily_protein)}г\n` +
                                 `🥑 Жиры: ${formatLine(totals.fat, daily_fat)}г\n` +
                                 `🍞 Углеводы: ${formatLine(totals.carbs, daily_carbs)}г` +
-                                waterText;
+                                waterText +
+                                totalWaterNormText;
                 }
                 
                 await bot.editMessageText(statsText, {
