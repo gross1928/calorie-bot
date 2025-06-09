@@ -4424,52 +4424,51 @@ const setupBot = (app) => {
                 });
                 
             } else if (action === 'update') {
-                // Обновляем поле в базе данных
-                const value = params.slice(1).join('_');
-                const state = profileEditState[telegram_id];
-                
-                if (!state) {
-                    await bot.editMessageText('Сессия истекла. Вернитесь в профиль и попробуйте снова.', {
+                // Этот блок обрабатывает нажатия на кнопки (Пол, Цель)
+                const fieldToUpdate = parts[2]; // e.g., 'goal'
+                const valueToSave = parts.slice(3).join('_'); // e.g., 'lose_weight'
+
+                let updatePayload = {};
+                let fieldNameForMessage = '';
+                let displayValue = '';
+
+                if (fieldToUpdate === 'goal') {
+                    updatePayload.goal = valueToSave;
+                    fieldNameForMessage = 'Цель';
+                    displayValue = valueToSave === 'lose_weight' ? 'Похудеть' :
+                                 valueToSave === 'gain_mass' ? 'Набор массы' : 'Поддерживать вес';
+                } else if (fieldToUpdate === 'gender') {
+                    updatePayload.gender = valueToSave;
+                    fieldNameForMessage = 'Пол';
+                    displayValue = valueToSave === 'male' ? 'Мужской' : 'Женский';
+                } else {
+                    await bot.editMessageText('❌ Неизвестное действие. Попробуйте снова.', {
                         chat_id, message_id: msg.message_id
                     });
                     return;
                 }
                 
-                let updateField = '';
-                let displayValue = '';
-                
-                if (field === 'goal') {
-                    updateField = 'goal';
-                    displayValue = value === 'lose_weight' ? 'Похудеть' : 
-                                  value === 'gain_mass' ? 'Набрать массу' : 'Поддерживать вес';
-                } else if (field === 'gender') {
-                    updateField = 'gender';
-                    displayValue = value === 'male' ? 'Мужской' : 'Женский';
-                }
-                
                 try {
                     const { error } = await supabase
                         .from('profiles')
-                        .update({ [updateField]: value })
+                        .update(updatePayload)
                         .eq('telegram_id', telegram_id);
                     
                     if (error) throw error;
                     
-                    // Пересчитываем нормы если изменился пол или цель
-                    if (field === 'goal' || field === 'gender') {
-                        const { data: profile } = await supabase
-                            .from('profiles')
-                            .select('*')
-                            .eq('telegram_id', telegram_id)
-                            .single();
-                        
-                        if (profile) {
-                            await calculateAndSaveNorms(profile);
-                        }
+                    // Пересчитываем нормы, так как изменились важные параметры
+                    const { data: profile } = await supabase
+                        .from('profiles')
+                        .select('*')
+                        .eq('telegram_id', telegram_id)
+                        .single();
+                    
+                    if (profile) {
+                        await calculateAndSaveNorms(profile);
                     }
                     
-                    await bot.editMessageText(`✅ ${field === 'goal' ? 'Цель' : 'Пол'} успешно изменен на: ${displayValue}\n\nВозвращаюсь в профиль...`, {
-                        chat_id, message_id: msg.message_id
+                    await bot.editMessageText(`✅ ${fieldNameForMessage} успешно изменена на: ${displayValue}\n\nВозвращаюсь в профиль...`, {
+                        chat_id, message_id: msg.message_id,
                     });
                     
                     // Показываем обновленный профиль через 2 секунды
@@ -4483,8 +4482,6 @@ const setupBot = (app) => {
                         chat_id, message_id: msg.message_id
                     });
                 }
-                
-                delete profileEditState[telegram_id];
                 
             } else if (action === 'recalculate') {
                 // Пересчитываем нормы
