@@ -50,35 +50,25 @@ const showTyping = async (chat_id, duration = 3000) => {
 
 const streamMessage = async (chat_id, fullText, options = {}) => {
     try {
-        // Показываем индикатор печатания
-        await bot.sendChatAction(chat_id, 'typing');
+        // Разбиваем текст на слова для постепенного показа
+        const words = fullText.trim().split(/\s+/);
         
-        // Разбиваем текст на части для постепенного показа
-        const chunks = [];
-        const words = fullText.split(' ');
-        let currentChunk = '';
-        
-        for (const word of words) {
-            if (currentChunk.length + word.length + 1 <= 50) { // Ограничиваем размер чанка
-                currentChunk += (currentChunk ? ' ' : '') + word;
-            } else {
-                if (currentChunk) chunks.push(currentChunk);
-                currentChunk = word;
-            }
+        if (words.length <= 1) {
+            // Если одно слово или пустой текст - отправляем сразу
+            return await bot.sendMessage(chat_id, fullText, options);
         }
-        if (currentChunk) chunks.push(currentChunk);
         
-        // Отправляем первый чанк
-        const sentMessage = await bot.sendMessage(chat_id, chunks[0] + '...', options);
+        // Отправляем первое слово
+        const sentMessage = await bot.sendMessage(chat_id, words[0] + '...', options);
         
-        // Постепенно добавляем остальные части
-        let accumulatedText = chunks[0];
+        // Постепенно добавляем остальные слова
+        let accumulatedText = words[0];
         
-        for (let i = 1; i < chunks.length; i++) {
-            await new Promise(resolve => setTimeout(resolve, 800 + Math.random() * 400)); // 800-1200мс задержка
-            accumulatedText += ' ' + chunks[i];
+        for (let i = 1; i < words.length; i++) {
+            await new Promise(resolve => setTimeout(resolve, 200 + Math.random() * 300)); // 200-500мс задержка между словами
+            accumulatedText += ' ' + words[i];
             
-            const isLast = i === chunks.length - 1;
+            const isLast = i === words.length - 1;
             const displayText = isLast ? accumulatedText : accumulatedText + '...';
             
             try {
@@ -88,9 +78,11 @@ const streamMessage = async (chat_id, fullText, options = {}) => {
                     ...options
                 });
             } catch (editError) {
-                // Если редактирование не удалось, прерываем
-                console.error('Error editing message during streaming:', editError);
-                break;
+                // Если редактирование не удалось (например, текст не изменился), прерываем
+                if (!editError.message.includes('message is not modified')) {
+                    console.error('Error editing message during streaming:', editError);
+                    break;
+                }
             }
         }
         
@@ -102,49 +94,18 @@ const streamMessage = async (chat_id, fullText, options = {}) => {
     }
 };
 
-const streamLongMessage = async (chat_id, fullText, options = {}) => {
-    try {
-        await bot.sendChatAction(chat_id, 'typing');
-        
-        // Для длинных сообщений используем другую стратегию - по предложениям
-        const sentences = fullText.match(/[^\.!?]+[\.!?]+/g) || [fullText];
-        
-        if (sentences.length <= 1) {
-            return await streamMessage(chat_id, fullText, options);
-        }
-        
-        // Отправляем первое предложение
-        const sentMessage = await bot.sendMessage(chat_id, sentences[0] + '\n\n_Формирую ответ..._', {
-            parse_mode: 'Markdown',
-            ...options
-        });
-        
-        let accumulatedText = sentences[0];
-        
-        for (let i = 1; i < sentences.length; i++) {
-            await new Promise(resolve => setTimeout(resolve, 1500 + Math.random() * 500)); // 1.5-2сек задержка
-            accumulatedText += ' ' + sentences[i];
-            
-            const isLast = i === sentences.length - 1;
-            const displayText = isLast ? accumulatedText : accumulatedText + '\n\n_Дополняю информацию..._';
-            
-            try {
-                await bot.editMessageText(displayText, {
-                    chat_id: chat_id,
-                    message_id: sentMessage.message_id,
-                    parse_mode: isLast ? options.parse_mode : 'Markdown',
-                    ...options
-                });
-            } catch (editError) {
-                console.error('Error editing long message during streaming:', editError);
-                break;
-            }
-        }
-        
-        return sentMessage;
-    } catch (error) {
-        console.error('Error in streamLongMessage:', error);
-        return await bot.sendMessage(chat_id, fullText, options);
+// Убрана функция streamLongMessage - используем только streamMessage для всех сообщений
+
+const shouldUseStreaming = (text) => {
+    // Используем streaming для текстов длиннее 3 слов
+    return text && typeof text === 'string' && text.trim().split(/\s+/).length > 3;
+};
+
+const smartSendMessage = async (chat_id, text, options = {}) => {
+    if (shouldUseStreaming(text)) {
+        return await streamMessage(chat_id, text, options);
+    } else {
+        return await bot.sendMessage(chat_id, text, options);
     }
 };
 
@@ -531,11 +492,18 @@ const answerUserQuestionStream = async (chat_id, message_id, question, profileDa
             }
         }
 
-        await bot.editMessageText(initialText + fullResponse, {
-            chat_id: chat_id,
-            message_id: message_id,
-            parse_mode: 'Markdown'
-        });
+        // Финальное обновление с полным ответом (убираем курсор)
+        try {
+            await bot.editMessageText(initialText + fullResponse, {
+                chat_id: chat_id,
+                message_id: message_id,
+                parse_mode: 'Markdown'
+            });
+        } catch (error) {
+            if (!error.message.includes('message is not modified')) {
+                console.warn('Ошибка финального обновления сообщения:', error.message);
+            }
+        }
 
         return { success: true };
 
@@ -2467,7 +2435,10 @@ const setupBot = (app) => {
 
                 // --- Voice Message Handler ---
         if (msg.voice) {
-            bot.sendChatAction(chat_id, 'typing');
+            // СРАЗУ показываем индикатор печатания
+            await bot.sendChatAction(chat_id, 'typing');
+            showTyping(chat_id, 20000);
+            
             const thinkingMessage = await bot.sendMessage(chat_id, '🎤 Получил голосовое сообщение! Преобразую речь в текст...');
             try {
                 const voice = msg.voice;
@@ -2717,12 +2688,18 @@ const setupBot = (app) => {
                                 break;
 
                             default:
-                                // Все остальные случаи - дружелюбный ответ
-                                await bot.editMessageText(`🎤 **Услышал:** "${transcriptionResult.text}"\n\n${analysisData.response_text}`, {
-                                    chat_id: thinkingMessage.chat.id,
-                                    message_id: thinkingMessage.message_id,
-                                    parse_mode: 'Markdown'
-                                });
+                                // Все остальные случаи - дружелюбный ответ с потоковым выводом
+                                const fullResponse = `🎤 **Услышал:** "${transcriptionResult.text}"\n\n${analysisData.response_text}`;
+                                if (shouldUseStreaming(fullResponse)) {
+                                    await bot.deleteMessage(thinkingMessage.chat.id, thinkingMessage.message_id);
+                                    await streamMessage(chat_id, fullResponse, { parse_mode: 'Markdown' });
+                                } else {
+                                    await bot.editMessageText(fullResponse, {
+                                        chat_id: thinkingMessage.chat.id,
+                                        message_id: thinkingMessage.message_id,
+                                        parse_mode: 'Markdown'
+                                    });
+                                }
                                 break;
                         }
                     } else {
@@ -2750,6 +2727,10 @@ const setupBot = (app) => {
 
                 // --- Document Handler ---
         if (msg.document) {
+            // СРАЗУ показываем индикатор печатания
+            await bot.sendChatAction(chat_id, 'typing');
+            showTyping(chat_id, 15000);
+            
             const thinkingMessage = await bot.sendMessage(chat_id, '📄 Получил документ! Анализирую содержимое...');
             try {
                 const document = msg.document;
@@ -2858,7 +2839,11 @@ const setupBot = (app) => {
         if (isWaitingForQuestion) {
             // Пользователь задает вопрос - обрабатываем его через AI
             delete questionState[telegram_id];
-            bot.sendChatAction(chat_id, 'typing');
+            
+            // СРАЗУ показываем индикатор печатания
+            await bot.sendChatAction(chat_id, 'typing');
+            showTyping(chat_id, 15000);
+            
             const thinkingMessage = await bot.sendMessage(chat_id, '🤔 Думаю над вашим вопросом...');
             
             try {
@@ -3230,7 +3215,10 @@ const setupBot = (app) => {
         // --- Universal Text Message Handler ---
         // Если сообщение не попало ни в одну из категорий выше, обрабатываем универсальным агентом
         if (msg.text && !msg.text.startsWith('/')) {
-            bot.sendChatAction(chat_id, 'typing');
+            // СРАЗУ показываем индикатор печатания
+            await bot.sendChatAction(chat_id, 'typing');
+            showTyping(chat_id, 15000);
+            
             const thinkingMessage = await bot.sendMessage(chat_id, '🤔 Анализирую ваше сообщение...');
             
             try {
@@ -3469,12 +3457,17 @@ const setupBot = (app) => {
                             break;
 
                         default:
-                            // Все остальные случаи - дружелюбный ответ
-                            await bot.editMessageText(analysisData.response_text, {
-                                chat_id: thinkingMessage.chat.id,
-                                message_id: thinkingMessage.message_id,
-                                parse_mode: 'Markdown'
-                            });
+                            // Все остальные случаи - дружелюбный ответ с потоковым выводом
+                            if (shouldUseStreaming(analysisData.response_text)) {
+                                await bot.deleteMessage(thinkingMessage.chat.id, thinkingMessage.message_id);
+                                await streamMessage(chat_id, analysisData.response_text, { parse_mode: 'Markdown' });
+                            } else {
+                                await bot.editMessageText(analysisData.response_text, {
+                                    chat_id: thinkingMessage.chat.id,
+                                    message_id: thinkingMessage.message_id,
+                                    parse_mode: 'Markdown'
+                                });
+                            }
                             break;
                     }
                 } else {
