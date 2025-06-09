@@ -742,6 +742,8 @@ const calculateCaloriesBurned = (workoutType, duration, exercises, profileData) 
 
 const addWorkoutRecord = async (telegram_id, workoutData) => {
     try {
+        console.log('Adding workout record with data:', workoutData);
+        
         const { data, error } = await supabase
             .from('workout_records')
             .insert({
@@ -756,11 +758,14 @@ const addWorkoutRecord = async (telegram_id, workoutData) => {
                 created_at: new Date().toISOString()
             });
 
-        if (error) throw error;
+        if (error) {
+            console.error('Supabase error details:', error);
+            throw error;
+        }
         return { success: true, data };
     } catch (error) {
         console.error('Error adding workout record:', error);
-        return { success: false, error: error.message };
+        return { success: false, error: error.message || error.toString() };
     }
 };
 
