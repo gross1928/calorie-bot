@@ -2,6 +2,7 @@ const TelegramBot = require('node-telegram-bot-api');
 const supabase = require('./supabaseClient');
 const OpenAI = require('openai');
 const crypto = require('crypto');
+const cron = require('node-cron');
 
 require('dotenv').config();
 
@@ -563,6 +564,182 @@ const createProgressBar = (consumed, norm) => {
     return `[${'■'.repeat(filledBlocks)}${'□'.repeat(emptyBlocks)}] ${percentage.toFixed(0)}%`;
 };
 
+// --- Daily Reports Functions ---
+const generateDailyReport = async (telegram_id) => {
+    try {
+        // Получаем профиль пользователя
+        const { data: profile, error: profileError } = await supabase
+            .from('profiles')
+            .select('id, first_name, weight_kg, daily_calories, daily_protein, daily_fat, daily_carbs')
+            .eq('telegram_id', telegram_id)
+            .single();
+
+        if (profileError || !profile) {
+            return null; // Пропускаем пользователей без профиля
+        }
+
+        // Получаем данные за сегодня
+        const today = new Date();
+        const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0);
+        const todayEnd = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59);
+
+        // Получаем еду за сегодня
+        const { data: todayMeals } = await supabase
+            .from('meals')
+            .select('calories, protein, fat, carbs, description')
+            .eq('user_id', profile.id)
+            .gte('eaten_at', todayStart.toISOString())
+            .lte('eaten_at', todayEnd.toISOString());
+
+        // Получаем воду за сегодня
+        const waterStats = await getWaterStats(telegram_id, 'today');
+        const todayDateString = today.toISOString().split('T')[0];
+        const todayWater = waterStats.success ? (waterStats.dailyStats[todayDateString] || 0) : 0;
+        const waterNorm = waterStats.success ? waterStats.waterNorm : calculateWaterNorm(profile.weight_kg);
+
+        // Подсчитываем калории и БЖУ
+        const totals = todayMeals ? todayMeals.reduce((acc, meal) => {
+            acc.calories += meal.calories || 0;
+            acc.protein += meal.protein || 0;
+            acc.fat += meal.fat || 0;
+            acc.carbs += meal.carbs || 0;
+            return acc;
+        }, { calories: 0, protein: 0, fat: 0, carbs: 0 }) : { calories: 0, protein: 0, fat: 0, carbs: 0 };
+
+        // Формируем отчет
+        let reportText = `🌙 **Ваш отчет за сегодня, ${profile.first_name}!**\n\n`;
+
+        // Проверяем, есть ли данные
+        if ((!todayMeals || todayMeals.length === 0) && todayWater === 0) {
+            reportText += `📋 Сегодня не было записей о еде и воде.\n`;
+            reportText += `💡 Не забывайте отслеживать свое питание и водный баланс!\n\n`;
+            reportText += `Хорошего вечера! 🌟`;
+            return reportText;
+        }
+
+        // Статистика питания
+        if (todayMeals && todayMeals.length > 0) {
+            const caloriePercentage = Math.round((totals.calories / profile.daily_calories) * 100);
+            reportText += `🍽️ **Питание:**\n`;
+            reportText += `🔥 Калории: ${totals.calories} / ${profile.daily_calories} (${caloriePercentage}%)\n`;
+            reportText += `${createProgressBar(totals.calories, profile.daily_calories)}\n\n`;
+
+            reportText += `**БЖУ за день:**\n`;
+            reportText += `🥩 Белки: ${totals.protein.toFixed(0)} / ${profile.daily_protein} г\n`;
+            reportText += `🥑 Жиры: ${totals.fat.toFixed(0)} / ${profile.daily_fat} г\n`;
+            reportText += `🍞 Углеводы: ${totals.carbs.toFixed(0)} / ${profile.daily_carbs} г\n\n`;
+        } else {
+            reportText += `🍽️ **Питание:** Записей не было\n\n`;
+        }
+
+        // Статистика воды
+        const waterPercentage = Math.round((todayWater / waterNorm) * 100);
+        reportText += `💧 **Вода:**\n`;
+        reportText += `${todayWater} / ${waterNorm} мл (${waterPercentage}%)\n`;
+        reportText += `${createProgressBar(todayWater, waterNorm)}\n\n`;
+
+        // Мотивационные сообщения и рекомендации
+        reportText += `📊 **Итоги дня:**\n`;
+        
+        let achievements = [];
+        let recommendations = [];
+
+        // Проверяем достижения
+        if (todayMeals && totals.calories >= profile.daily_calories * 0.8 && totals.calories <= profile.daily_calories * 1.2) {
+            achievements.push('🎯 Отличное соблюдение калорийности!');
+        }
+        if (waterPercentage >= 100) {
+            achievements.push('💧 Дневная норма воды выполнена!');
+        }
+        if (totals.protein >= profile.daily_protein * 0.8) {
+            achievements.push('🥩 Хорошее потребление белка!');
+        }
+
+        // Формируем рекомендации
+        if (!todayMeals || totals.calories < profile.daily_calories * 0.7) {
+            recommendations.push('🍽️ Завтра не забывайте добавлять все приемы пищи');
+        }
+        if (waterPercentage < 80) {
+            recommendations.push('💧 Стоит больше пить воды завтра');
+        }
+        if (totals.protein < profile.daily_protein * 0.7) {
+            recommendations.push('🥩 Добавьте больше белковых продуктов');
+        }
+
+        if (achievements.length > 0) {
+            reportText += achievements.join('\n') + '\n\n';
+        }
+
+        if (recommendations.length > 0) {
+            reportText += `💡 **Рекомендации на завтра:**\n`;
+            reportText += recommendations.join('\n') + '\n\n';
+        }
+
+        if (achievements.length > 0) {
+            reportText += `Отличная работа! 🌟`;
+        } else {
+            reportText += `Завтра новый день для достижения целей! 💪`;
+        }
+
+        return reportText;
+
+    } catch (error) {
+        console.error(`Error generating daily report for ${telegram_id}:`, error);
+        return null;
+    }
+};
+
+const sendDailyReports = async () => {
+    try {
+        console.log('📊 Начинаю отправку ежедневных отчетов...');
+        
+        // Получаем всех пользователей
+        const { data: users, error } = await supabase
+            .from('profiles')
+            .select('telegram_id, first_name');
+
+        if (error) {
+            console.error('Error fetching users for daily reports:', error);
+            return;
+        }
+
+        if (!users || users.length === 0) {
+            console.log('Нет пользователей для отправки отчетов');
+            return;
+        }
+
+        let sentCount = 0;
+        let failedCount = 0;
+
+        for (const user of users) {
+            try {
+                const report = await generateDailyReport(user.telegram_id);
+                
+                if (report) {
+                    await bot.sendMessage(user.telegram_id, report, {
+                        parse_mode: 'Markdown'
+                    });
+                    sentCount++;
+                    console.log(`✅ Отчет отправлен пользователю ${user.first_name} (${user.telegram_id})`);
+                    
+                    // Небольшая задержка между отправками, чтобы не превысить лимиты API
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                } else {
+                    console.log(`⚠️ Пропущен пользователь ${user.telegram_id} (нет данных)`);
+                }
+            } catch (userError) {
+                failedCount++;
+                console.error(`❌ Ошибка отправки отчета пользователю ${user.telegram_id}:`, userError.message);
+            }
+        }
+
+        console.log(`📊 Отправка отчетов завершена: ✅ ${sentCount} успешно, ❌ ${failedCount} ошибок`);
+
+    } catch (error) {
+        console.error('Error in sendDailyReports:', error);
+    }
+};
+
 const setupBot = (app) => {
     const url = process.env.SERVER_URL;
     
@@ -707,6 +884,38 @@ const setupBot = (app) => {
         } catch (error) {
             console.error('Debug error:', error);
             bot.sendMessage(chat_id, `Ошибка отладки: ${error.message}`);
+        }
+    });
+
+    // Команда для тестирования ежедневных отчетов (только для администратора)
+    bot.onText(/\/test_daily_report/, async (msg) => {
+        const telegram_id = msg.from.id;
+        const chat_id = msg.chat.id;
+        
+        // Можете поменять этот ID на ваш telegram_id для тестирования
+        const adminId = '123456789'; // Замените на ваш telegram_id
+        
+        if (telegram_id.toString() === adminId) {
+            bot.sendMessage(chat_id, '📊 Запускаю тестовую отправку ежедневных отчетов...');
+            await sendDailyReports();
+            bot.sendMessage(chat_id, '✅ Тестовая отправка завершена! Проверьте логи.');
+        } else {
+            bot.sendMessage(chat_id, '❌ У вас нет прав для выполнения этой команды.');
+        }
+    });
+
+    // Команда для получения персонального отчета
+    bot.onText(/\/my_report/, async (msg) => {
+        const telegram_id = msg.from.id;
+        const chat_id = msg.chat.id;
+        
+        bot.sendMessage(chat_id, '📊 Генерирую ваш персональный отчет...');
+        
+        const report = await generateDailyReport(telegram_id);
+        if (report) {
+            bot.sendMessage(chat_id, report, { parse_mode: 'Markdown' });
+        } else {
+            bot.sendMessage(chat_id, '❌ Не удалось сгенерировать отчет. Возможно, у вас нет профиля или данных за сегодня.');
         }
     });
 
@@ -2001,5 +2210,18 @@ const setupBot = (app) => {
     });
     return bot;
 };
+
+// --- Daily Reports Cron Job ---
+// Запускаем ежедневные отчеты каждый день в 21:00 (по московскому времени)
+// Cron pattern: '0 21 * * *' = каждый день в 21:00
+cron.schedule('0 21 * * *', () => {
+    console.log('🕘 Время для ежедневных отчетов!');
+    sendDailyReports();
+}, {
+    scheduled: true,
+    timezone: "Europe/Moscow"
+});
+
+console.log('⏰ Планировщик ежедневных отчетов настроен (каждый день в 21:00 МСК)');
 
 module.exports = { setupBot };
