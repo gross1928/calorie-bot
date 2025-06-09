@@ -58,19 +58,18 @@ const streamMessage = async (chat_id, fullText, options = {}) => {
             return await bot.sendMessage(chat_id, fullText, options);
         }
         
-        // Отправляем первый символ с тонким современным курсором
-        const sentMessage = await bot.sendMessage(chat_id, chars[0] + '│', options);
+        // Отправляем первый символ БЕЗ курсора для максимальной скорости
+        const sentMessage = await bot.sendMessage(chat_id, chars[0], options);
         
-        // Постепенно добавляем остальные символы
+        // Постепенно добавляем остальные символы БЕЗ КУРСОРА
         let accumulatedText = chars[0];
         
         for (let i = 1; i < chars.length; i++) {
-            // МГНОВЕННЫЙ вывод как в "Матрице": 0.05-0.12мс между символами - ТЕЛЕПОРТАЦИЯ ТЕКСТА!
+            // МГНОВЕННЫЙ вывод без курсора - МАКСИМАЛЬНАЯ СКОРОСТЬ БЕЗ ЛИШНИХ СИМВОЛОВ!
             await new Promise(resolve => setTimeout(resolve, 0.05 + Math.random() * 0.07));
             accumulatedText += chars[i];
             
-            const isLast = i === chars.length - 1;
-            const displayText = isLast ? accumulatedText : accumulatedText + '│';
+            const displayText = accumulatedText; // БЕЗ КУРСОРА!
             
             try {
                 await bot.editMessageText(displayText, {
@@ -520,15 +519,15 @@ const answerUserQuestionStream = async (chat_id, message_id, question, profileDa
             if (content) {
                 fullResponse += content;
                 
-                // Если ещё не отправили сообщение, отправляем первый кусок
+                // Если ещё не отправили сообщение, отправляем первый кусок БЕЗ КУРСОРА
                 if (!sentMessage && fullResponse.length > 10) {
-                    sentMessage = await bot.sendMessage(chat_id, initialText + fullResponse + '│', {
+                    sentMessage = await bot.sendMessage(chat_id, initialText + fullResponse, {
                         parse_mode: 'Markdown'
                     });
                 } else if (sentMessage) {
-                    // Обновляем существующее сообщение
+                    // Обновляем существующее сообщение БЕЗ КУРСОРА
                     try {
-                        await bot.editMessageText(initialText + fullResponse + '│', {
+                        await bot.editMessageText(initialText + fullResponse, {
                             chat_id: chat_id,
                             message_id: sentMessage.message_id,
                             parse_mode: 'Markdown'
