@@ -611,7 +611,7 @@ const logWorkout = async (telegram_id, workoutData) => {
 
         console.log('Exercises string:', exercisesString);
 
-        // Добавляем все необходимые поля для таблицы workout_logs
+        // Добавляем все необходимые поля для таблицы workout_records
         const insertData = {
             telegram_id: String(telegram_id), // Убеждаемся что это строка
             workout_type: workoutData.workout_type || 'general',
@@ -673,7 +673,7 @@ const getWorkoutStats = async (telegram_id, period) => {
         }
 
         const { data: workoutRecords, error } = await supabase
-            .from('workout_logs')
+            .from('workout_records')
             .select('*')
             .eq('telegram_id', telegram_id)
             .gte('date', startDate.toISOString().split('T')[0])
@@ -796,8 +796,11 @@ const addWorkoutRecord = async (telegram_id, workoutData) => {
         console.log('Trying to insert basic workout data:', basicData);
 
         const { data, error } = await supabase
-            .from('workout_logs')
-            .insert(basicData);
+            .from('workout_records')
+            .insert({
+                ...basicData,
+                created_at: new Date().toISOString()
+            });
 
         if (error) {
             console.error('Supabase error details:', error);
