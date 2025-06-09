@@ -21,6 +21,10 @@ const manualAddState = {};
 const mealConfirmationCache = {};
 const workoutPlanState = {};
 const nutritionPlanState = {};
+const waterInputState = {};
+
+// Состояние для ожидания вопросов от пользователя
+const questionState = {};
 
 // --- Helper Functions ---
 const getDateRange = (period) => {
@@ -352,6 +356,213 @@ const generateNutritionPlan = async (profileData, additionalData) => {
     }
 };
 
+const answerUserQuestion = async (question, profileData = null) => {
+    try {
+        console.log('Answering user question with OpenAI...');
+        
+        const profileInfo = profileData ? `
+ПРОФИЛЬ ПОЛЬЗОВАТЕЛЯ:
+- Имя: ${profileData.first_name}
+- Пол: ${profileData.gender === 'male' ? 'мужской' : 'женский'}
+- Возраст: ${profileData.age} лет
+- Рост: ${profileData.height_cm} см
+- Вес: ${profileData.weight_kg} кг
+- Цель: ${profileData.goal === 'lose_weight' ? 'похудение' : profileData.goal === 'gain_mass' ? 'набор массы' : 'поддержание веса'}
+${profileData.daily_calories ? `- Дневная норма калорий: ${profileData.daily_calories} ккал` : ''}
+${profileData.daily_protein ? `- Белки: ${profileData.daily_protein} г` : ''}
+${profileData.daily_fat ? `- Жиры: ${profileData.daily_fat} г` : ''}
+${profileData.daily_carbs ? `- Углеводы: ${profileData.daily_carbs} г` : ''}
+` : '';
+
+        const systemPrompt = `Ты - умный помощник по питанию и здоровому образу жизни. Ты работаешь в Telegram боте для подсчета калорий.
+
+${profileInfo}
+
+ТВОИ ВОЗМОЖНОСТИ:
+- Отвечать на вопросы о питании, калориях, КБЖУ, диетах
+- Давать советы по здоровому питанию и тренировкам
+- Помогать с планированием питания
+- Отвечать на вопросы о продуктах и их калорийности
+- Давать рекомендации по достижению целей (похудение/набор массы/поддержание веса)
+
+ПРАВИЛА:
+1. Отвечай кратко и по делу (максимум 500 символов)
+2. Используй эмодзи для лучшего восприятия
+3. Если вопрос не по теме питания/здоровья, вежливо перенаправь к основным функциям бота
+4. Учитывай профиль пользователя в ответах
+5. Не давай медицинских диагнозов и советов, рекомендуй обратиться к врачу при серьезных вопросах
+
+ПРИМЕРЫ ХОРОШИХ ОТВЕТОВ:
+- "🥗 Для похудения важен дефицит калорий. Твоя норма ${profileData?.daily_calories || 'XXXX'} ккал, старайся есть на 300-500 ккал меньше."
+- "🍎 Яблоко содержит примерно 50 ккал на 100г. Отличный перекус!"
+- "💪 Для набора мышечной массы нужно 1.6-2.2г белка на кг веса. У тебя это ${profileData?.daily_protein || 'XX'}г в день."`;
+
+        const response = await openai.chat.completions.create({
+            model: 'gpt-4o',
+            messages: [
+                { role: 'system', content: systemPrompt },
+                { role: 'user', content: question }
+            ],
+            max_tokens: 300,
+        });
+
+        const answer = response.choices[0].message.content;
+        return { success: true, answer };
+
+    } catch (error) {
+        console.error('Error answering user question:', error);
+        return { success: false, error: error.message };
+    }
+};
+
+// --- Water Tracking Functions ---
+const calculateWaterNorm = (weight_kg) => {
+    // Рекомендуемая норма: 30-35 мл на кг веса
+    return Math.round(weight_kg * 32.5); // Берем среднее значение
+};
+
+const addWaterIntake = async (telegram_id, amount_ml) => {
+    try {
+        // Получаем профиль пользователя
+        const { data: profile, error: profileError } = await supabase
+            .from('profiles')
+            .select('id')
+            .eq('telegram_id', telegram_id)
+            .single();
+
+        if (profileError || !profile) {
+            throw new Error('Профиль пользователя не найден');
+        }
+
+        // Добавляем запись о воде
+        const { error: insertError } = await supabase
+            .from('water_intake')
+            .insert({
+                user_id: profile.id,
+                amount_ml: amount_ml,
+                recorded_at: new Date().toISOString()
+            });
+
+        if (insertError) throw insertError;
+
+        return { success: true };
+    } catch (error) {
+        console.error('Error adding water intake:', error);
+        return { success: false, error: error.message };
+    }
+};
+
+const getWaterStats = async (telegram_id, period) => {
+    try {
+        // Получаем профиль пользователя
+        const { data: profile, error: profileError } = await supabase
+            .from('profiles')
+            .select('id, weight_kg')
+            .eq('telegram_id', telegram_id)
+            .single();
+
+        if (profileError || !profile) {
+            throw new Error('Профиль пользователя не найден');
+        }
+
+        // Получаем данные за период
+        const { startDate, endDate } = getDateRange(period);
+        
+        const { data: waterRecords, error: waterError } = await supabase
+            .from('water_intake')
+            .select('amount_ml, recorded_at')
+            .eq('user_id', profile.id)
+            .gte('recorded_at', startDate.toISOString())
+            .lte('recorded_at', endDate.toISOString())
+            .order('recorded_at', { ascending: false });
+
+        if (waterError) throw waterError;
+
+        const waterNorm = calculateWaterNorm(profile.weight_kg);
+        
+        let totalWater = 0;
+        let dailyStats = {};
+
+        if (waterRecords && waterRecords.length > 0) {
+            waterRecords.forEach(record => {
+                totalWater += record.amount_ml;
+                
+                const recordDate = new Date(record.recorded_at).toISOString().split('T')[0];
+                if (!dailyStats[recordDate]) {
+                    dailyStats[recordDate] = 0;
+                }
+                dailyStats[recordDate] += record.amount_ml;
+            });
+        }
+
+        return {
+            success: true,
+            totalWater,
+            waterNorm,
+            dailyStats,
+            recordsCount: waterRecords ? waterRecords.length : 0
+        };
+    } catch (error) {
+        console.error('Error getting water stats:', error);
+        return { success: false, error: error.message };
+    }
+};
+
+const showWaterMenu = async (chat_id, telegram_id) => {
+    try {
+        // Получаем сегодняшнюю статистику
+        const waterStats = await getWaterStats(telegram_id, 'today');
+        
+        if (!waterStats.success) {
+            bot.sendMessage(chat_id, 'Ошибка при получении данных о воде.');
+            return;
+        }
+
+        const { totalWater, waterNorm } = waterStats;
+        const today = new Date().toISOString().split('T')[0];
+        const todayWater = waterStats.dailyStats[today] || 0;
+        
+        const percentage = Math.round((todayWater / waterNorm) * 100);
+        const progressBar = createProgressBar(todayWater, waterNorm);
+
+        let waterText = `💧 **Отслеживание воды**\n\n`;
+        waterText += `📊 Сегодня: ${todayWater} / ${waterNorm} мл (${percentage}%)\n`;
+        waterText += `${progressBar}\n\n`;
+        waterText += `Выберите количество для добавления:`;
+
+        bot.sendMessage(chat_id, waterText, {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [
+                        { text: '💧 100 мл', callback_data: 'water_add_100' },
+                        { text: '💧 200 мл', callback_data: 'water_add_200' }
+                    ],
+                    [
+                        { text: '💧 250 мл', callback_data: 'water_add_250' },
+                        { text: '💧 500 мл', callback_data: 'water_add_500' }
+                    ],
+                    [
+                        { text: '📊 Статистика воды', callback_data: 'water_stats' },
+                        { text: '✏️ Свое количество', callback_data: 'water_custom' }
+                    ]
+                ]
+            }
+        });
+    } catch (error) {
+        console.error('Error showing water menu:', error);
+        bot.sendMessage(chat_id, 'Произошла ошибка. Попробуйте позже.');
+    }
+};
+
+const createProgressBar = (consumed, norm) => {
+    if (!norm || norm === 0) return '';
+    const percentage = Math.min(100, (consumed / norm) * 100);
+    const filledBlocks = Math.round(percentage / 10);
+    const emptyBlocks = 10 - filledBlocks;
+    return `[${'■'.repeat(filledBlocks)}${'□'.repeat(emptyBlocks)}] ${percentage.toFixed(0)}%`;
+};
+
 const setupBot = (app) => {
     const url = process.env.SERVER_URL;
     
@@ -394,7 +605,8 @@ const setupBot = (app) => {
                 keyboard: [
                     [{ text: '📸 Добавить по фото' }],
                     [{ text: '✍️ Добавить вручную' }, { text: '📊 Статистика' }],
-                    [{ text: '🏋️ План тренировок' }, { text: '🍽️ План питания' }]
+                    [{ text: '🏋️ План тренировок' }, { text: '🍽️ План питания' }],
+                    [{ text: '💧 Отслеживание воды' }]
                 ],
                 resize_keyboard: true,
                 one_time_keyboard: false
@@ -587,6 +799,10 @@ const setupBot = (app) => {
             }
             return;
         }
+        if (msg.text === '💧 Отслеживание воды') {
+            showWaterMenu(chat_id, telegram_id);
+            return;
+        }
 
         // --- Photo Handler ---
         if (msg.photo) {
@@ -638,6 +854,79 @@ const setupBot = (app) => {
         // --- State-based Input Handlers ---
         const registrationStep = registrationState[telegram_id]?.step;
         const manualAddStep = manualAddState[telegram_id]?.step;
+        const isWaitingForQuestion = questionState[telegram_id]?.waiting;
+        const isWaitingForWater = waterInputState[telegram_id]?.waiting;
+
+        if (isWaitingForQuestion) {
+            // Пользователь задает вопрос - обрабатываем его через AI
+            delete questionState[telegram_id];
+            const thinkingMessage = await bot.sendMessage(chat_id, '🤔 Думаю над вашим вопросом...');
+            
+            try {
+                // Получаем профиль пользователя для персонализированного ответа
+                const { data: profile } = await supabase
+                    .from('profiles')
+                    .select('first_name, gender, age, height_cm, weight_kg, goal, daily_calories, daily_protein, daily_fat, daily_carbs')
+                    .eq('telegram_id', telegram_id)
+                    .single();
+
+                const questionResult = await answerUserQuestion(msg.text, profile);
+
+                if (questionResult.success) {
+                    await bot.editMessageText(questionResult.answer, {
+                        chat_id: thinkingMessage.chat.id,
+                        message_id: thinkingMessage.message_id,
+                        parse_mode: 'Markdown'
+                    });
+                } else {
+                    await bot.editMessageText('🤖 Извините, произошла ошибка при обработке вашего вопроса. Попробуйте еще раз или используйте основные функции бота.', {
+                        chat_id: thinkingMessage.chat.id,
+                        message_id: thinkingMessage.message_id
+                    });
+                }
+            } catch (error) {
+                console.error("Error answering user question:", error);
+                await bot.editMessageText('🤖 Извините, произошла ошибка при обработке вашего вопроса. Попробуйте еще раз или используйте основные функции бота.', {
+                    chat_id: thinkingMessage.chat.id,
+                    message_id: thinkingMessage.message_id
+                });
+            }
+            return;
+        }
+
+        if (isWaitingForWater) {
+            // Пользователь ввел количество воды
+            delete waterInputState[telegram_id];
+
+            const amount = parseInt(msg.text);
+            if (isNaN(amount) || amount <= 0 || amount > 5000) {
+                bot.sendMessage(chat_id, '❌ Пожалуйста, введите корректное количество воды от 1 до 5000 мл.');
+                return;
+            }
+
+            const result = await addWaterIntake(telegram_id, amount);
+            if (result.success) {
+                const waterStats = await getWaterStats(telegram_id, 'today');
+                const today = new Date().toISOString().split('T')[0];
+                const todayWater = waterStats.dailyStats[today] || 0;
+                const percentage = Math.round((todayWater / waterStats.waterNorm) * 100);
+
+                let responseText = `✅ Добавлено: ${amount} мл воды\n\n`;
+                responseText += `📊 Сегодня выпито: ${todayWater} / ${waterStats.waterNorm} мл (${percentage}%)\n`;
+                
+                if (percentage >= 100) {
+                    responseText += `🎉 Поздравляю! Вы выполнили дневную норму воды!`;
+                } else {
+                    const remaining = waterStats.waterNorm - todayWater;
+                    responseText += `💡 Осталось выпить: ${remaining} мл`;
+                }
+
+                bot.sendMessage(chat_id, responseText);
+            } else {
+                bot.sendMessage(chat_id, `❌ Ошибка при сохранении: ${result.error}`);
+            }
+            return;
+        }
 
         if (manualAddStep === 'awaiting_input') {
             delete manualAddState[telegram_id];
@@ -766,8 +1055,9 @@ const setupBot = (app) => {
             const [planType, , actionType] = data.split('_');
             
             if (actionType === 'no') {
-                // Пользователь выбрал "Нет"
-                await bot.editMessageText('Какой у вас вопрос?', {
+                // Пользователь выбрал "Нет" - включаем режим ожидания вопроса
+                questionState[telegram_id] = { waiting: true };
+                await bot.editMessageText('Какой у вас вопрос? 🤔\n\nЯ могу помочь с вопросами о питании, калориях, тренировках и здоровом образе жизни.', {
                     chat_id, message_id: msg.message_id,
                     reply_markup: null
                 });
@@ -938,6 +1228,128 @@ const setupBot = (app) => {
             return;
         }
         
+        // --- Water Callbacks ---
+        if (action === 'water') {
+            await bot.answerCallbackQuery(callbackQuery.id);
+            
+            if (params[0] === 'add') {
+                const amount = parseInt(params[1]);
+                const result = await addWaterIntake(telegram_id, amount);
+                
+                if (result.success) {
+                    // Обновляем меню с новой статистикой
+                    const waterStats = await getWaterStats(telegram_id, 'today');
+                    const today = new Date().toISOString().split('T')[0];
+                    const todayWater = waterStats.dailyStats[today] || 0;
+                    const percentage = Math.round((todayWater / waterStats.waterNorm) * 100);
+                    const progressBar = createProgressBar(todayWater, waterStats.waterNorm);
+
+                    let waterText = `💧 **Отслеживание воды**\n\n`;
+                    waterText += `✅ Добавлено: ${amount} мл\n`;
+                    waterText += `📊 Сегодня: ${todayWater} / ${waterStats.waterNorm} мл (${percentage}%)\n`;
+                    waterText += `${progressBar}\n\n`;
+                    waterText += `Выберите количество для добавления:`;
+
+                    await bot.editMessageText(waterText, {
+                        chat_id, message_id: msg.message_id,
+                        parse_mode: 'Markdown',
+                        reply_markup: {
+                            inline_keyboard: [
+                                [
+                                    { text: '💧 100 мл', callback_data: 'water_add_100' },
+                                    { text: '💧 200 мл', callback_data: 'water_add_200' }
+                                ],
+                                [
+                                    { text: '💧 250 мл', callback_data: 'water_add_250' },
+                                    { text: '💧 500 мл', callback_data: 'water_add_500' }
+                                ],
+                                [
+                                    { text: '📊 Статистика воды', callback_data: 'water_stats' },
+                                    { text: '✏️ Свое количество', callback_data: 'water_custom' }
+                                ]
+                            ]
+                        }
+                    });
+                } else {
+                    await bot.editMessageText(`❌ Ошибка: ${result.error}`, {
+                        chat_id, message_id: msg.message_id
+                    });
+                }
+            } else if (params[0] === 'stats') {
+                // Показываем статистику воды
+                bot.sendMessage(chat_id, 'За какой период показать статистику воды?', {
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: 'За сегодня', callback_data: 'water_period_today' }],
+                            [{ text: 'За неделю', callback_data: 'water_period_week' }],
+                            [{ text: 'За месяц', callback_data: 'water_period_month' }]
+                        ]
+                    }
+                });
+            } else if (params[0] === 'period') {
+                const period = params[1];
+                const waterStats = await getWaterStats(telegram_id, period);
+                
+                if (waterStats.success) {
+                    let periodText = '';
+                    if (period === 'today') periodText = 'сегодня';
+                    else if (period === 'week') periodText = 'за неделю';
+                    else if (period === 'month') periodText = 'за месяц';
+
+                    let statsText = `💧 **Статистика воды ${periodText}**\n\n`;
+                    
+                    if (waterStats.recordsCount === 0) {
+                        statsText += `За ${periodText} вы еще не добавляли записи о воде.`;
+                    } else {
+                        if (period === 'today') {
+                            const today = new Date().toISOString().split('T')[0];
+                            const todayWater = waterStats.dailyStats[today] || 0;
+                            const percentage = Math.round((todayWater / waterStats.waterNorm) * 100);
+                            const progressBar = createProgressBar(todayWater, waterStats.waterNorm);
+
+                            statsText += `📊 Выпито: ${todayWater} / ${waterStats.waterNorm} мл (${percentage}%)\n`;
+                            statsText += `${progressBar}\n\n`;
+                            
+                            if (percentage >= 100) {
+                                statsText += `🎉 Отлично! Вы выполнили дневную норму воды!`;
+                            } else {
+                                const remaining = waterStats.waterNorm - todayWater;
+                                statsText += `💡 Осталось выпить: ${remaining} мл`;
+                            }
+                        } else {
+                            const daysWithData = Object.keys(waterStats.dailyStats).length;
+                            const avgDaily = Math.round(waterStats.totalWater / Math.max(daysWithData, 1));
+                            
+                            statsText += `📈 Всего выпито: ${waterStats.totalWater} мл\n`;
+                            statsText += `📅 Дней с записями: ${daysWithData}\n`;
+                            statsText += `📊 В среднем в день: ${avgDaily} мл\n`;
+                            statsText += `🎯 Дневная норма: ${waterStats.waterNorm} мл\n\n`;
+                            
+                            const avgPercentage = Math.round((avgDaily / waterStats.waterNorm) * 100);
+                            statsText += `💯 Выполнение нормы: ${avgPercentage}%`;
+                        }
+                    }
+
+                    await bot.editMessageText(statsText, {
+                        chat_id, message_id: msg.message_id,
+                        parse_mode: 'Markdown'
+                    });
+                } else {
+                    await bot.editMessageText(`❌ Ошибка: ${waterStats.error}`, {
+                        chat_id, message_id: msg.message_id
+                    });
+                }
+            } else if (params[0] === 'custom') {
+                // Включаем режим ожидания ввода количества воды
+                waterInputState[telegram_id] = { waiting: true };
+                await bot.editMessageText('Напишите количество воды в миллилитрах (например, 300):', {
+                    chat_id, message_id: msg.message_id,
+                    reply_markup: null
+                });
+            }
+            return;
+        }
+
         // --- Registration Callbacks ---
         if (action === 'register' && registrationState[telegram_id]) {
             const state = registrationState[telegram_id];
@@ -1059,7 +1471,7 @@ const setupBot = (app) => {
             try {
                 const { data: profile, error: profileError } = await supabase
                     .from('profiles')
-                    .select('id, first_name, daily_calories, daily_protein, daily_fat, daily_carbs')
+                    .select('id, first_name, weight_kg, daily_calories, daily_protein, daily_fat, daily_carbs')
                     .eq('telegram_id', telegram_id)
                     .single();
 
@@ -1120,13 +1532,6 @@ const setupBot = (app) => {
                     }, { calories: 0, protein: 0, fat: 0, carbs: 0 });
                     
                     const formatLine = (consumed, norm) => norm ? `${consumed.toFixed(0)} / ${norm} ` : `${consumed.toFixed(0)} `;
-                    const createProgressBar = (consumed, norm) => {
-                        if (!norm) return '';
-                        const percentage = Math.min(100, (consumed / norm) * 100);
-                        const filledBlocks = Math.round(percentage / 10);
-                        const emptyBlocks = 10 - filledBlocks;
-                        return `[${'■'.repeat(filledBlocks)}${'□'.repeat(emptyBlocks)}] ${percentage.toFixed(0)}%`;
-                    };
 
                     const { daily_calories, daily_protein, daily_fat, daily_carbs } = profile;
                     
@@ -1138,6 +1543,28 @@ const setupBot = (app) => {
                          dailyAverageText = `📈 Среднесуточно: *${avgCalories.toFixed(0)} ккал/день*\n\n`;
                     }
 
+                    // Получаем статистику воды
+                    const waterStats = await getWaterStats(telegram_id, period);
+                    let waterText = '';
+                    
+                    if (waterStats.success) {
+                        if (period === 'today') {
+                            const today = new Date().toISOString().split('T')[0];
+                            const todayWater = waterStats.dailyStats[today] || 0;
+                            const waterPercentage = Math.round((todayWater / waterStats.waterNorm) * 100);
+                            waterText = `\n\n💧 Вода: *${todayWater} / ${waterStats.waterNorm} мл (${waterPercentage}%)*\n` +
+                                       `${createProgressBar(todayWater, waterStats.waterNorm)}`;
+                        } else {
+                            const daysWithData = Object.keys(waterStats.dailyStats).length;
+                            if (daysWithData > 0) {
+                                const avgDaily = Math.round(waterStats.totalWater / Math.max(daysWithData, 1));
+                                const avgPercentage = Math.round((avgDaily / waterStats.waterNorm) * 100);
+                                waterText = `\n\n💧 Вода: *${waterStats.totalWater} мл всего (${avgDaily} мл/день)*\n` +
+                                           `Выполнение нормы: ${avgPercentage}%`;
+                            }
+                        }
+                    }
+
                     statsText = `*Статистика за ${periodText}, ${profile.first_name}:*\n\n` +
                                 `🔥 Калории: *${formatLine(totals.calories, daily_calories)}ккал*\n` +
                                 `${createProgressBar(totals.calories, daily_calories)}\n\n` +
@@ -1145,7 +1572,8 @@ const setupBot = (app) => {
                                 `*Общее количество БЖУ:*\n` +
                                 `🥩 Белки: ${formatLine(totals.protein, daily_protein)}г\n` +
                                 `🥑 Жиры: ${formatLine(totals.fat, daily_fat)}г\n` +
-                                `🍞 Углеводы: ${formatLine(totals.carbs, daily_carbs)}г`;
+                                `🍞 Углеводы: ${formatLine(totals.carbs, daily_carbs)}г` +
+                                waterText;
                 }
                 
                 await bot.editMessageText(statsText, {
