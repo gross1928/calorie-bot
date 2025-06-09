@@ -480,6 +480,15 @@ ${profileData.timeframe_months ? `- Срок достижения цели: ${pr
 
 const answerUserQuestionStream = async (chat_id, message_id, question, profileData = null) => {
     try {
+        // Показываем красивые этапы обработки
+        const statusMessage = await bot.sendMessage(chat_id, '🤔 Анализирую ваш вопрос...');
+        
+        await new Promise(resolve => setTimeout(resolve, 800));
+        await bot.editMessageText('💭 Размышляю над ответом...', {
+            chat_id: chat_id,
+            message_id: statusMessage.message_id
+        });
+
         let systemPrompt = `Ты — дружелюбный и знающий ассистент по здоровому образу жизни. Дай подробный и полезный ответ на вопрос пользователя. 
 
 ВАЖНЫЕ ПРАВИЛА ФОРМАТИРОВАНИЯ:
@@ -500,69 +509,43 @@ const answerUserQuestionStream = async (chat_id, message_id, question, profileDa
 - Цель: ${profileData.goal}`;
         }
 
-        const stream = await openai.chat.completions.create({
-            model: 'gpt-4o-mini', // Быстрая модель для ускорения ответов
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        await bot.editMessageText('🧠 Формулирую персональный ответ...', {
+            chat_id: chat_id,
+            message_id: statusMessage.message_id
+        });
+
+        const response = await openai.chat.completions.create({
+            model: 'gpt-4o-mini',
             messages: [
                 { role: 'system', content: systemPrompt },
                 { role: 'user', content: question }
             ],
-            stream: true,
-            max_tokens: 800, // Оптимизация для скорости
-            temperature: 0.7, // Баланс креативности и скорости
+            max_tokens: 800,
+            temperature: 0.7,
         });
 
-        let fullResponse = '';
-        let sentMessage = null;
+        const fullResponse = response.choices[0].message.content;
+        
+        await new Promise(resolve => setTimeout(resolve, 500));
+        await bot.editMessageText('✍️ Оформляю ответ...', {
+            chat_id: chat_id,
+            message_id: statusMessage.message_id
+        });
+
+        // Форматируем финальный ответ
         const initialText = `🎤 **Ваш вопрос:** "${question}"\n\n`;
+        const beautifiedResponse = formatAIResponse(fullResponse);
+        const finalText = initialText + beautifiedResponse;
 
-        for await (const chunk of stream) {
-            const content = chunk.choices[0]?.delta?.content || '';
-            if (content) {
-                fullResponse += content;
-                
-                // Если ещё не отправили сообщение, отправляем первый кусок БЕЗ КУРСОРА
-                if (!sentMessage && fullResponse.length > 10) {
-                    sentMessage = await bot.sendMessage(chat_id, initialText + fullResponse, {
-                        parse_mode: 'Markdown'
-                    });
-                } else if (sentMessage) {
-                    // Обновляем существующее сообщение БЕЗ КУРСОРА
-                    try {
-                        await bot.editMessageText(initialText + fullResponse, {
-                            chat_id: chat_id,
-                            message_id: sentMessage.message_id,
-                            parse_mode: 'Markdown'
-                        });
-                    } catch (error) {
-                        if (!error.message.includes('message is not modified')) {
-                            console.warn('Промежуточная ошибка при обновлении сообщения (Markdown):', error.message);
-                        }
-                    }
-                }
-            }
-        }
-
-        // Финальное обновление с полным ответом (убираем курсор и применяем красивое форматирование)
-        if (sentMessage) {
-            try {
-                const beautifiedResponse = formatAIResponse(fullResponse);
-                await bot.editMessageText(initialText + beautifiedResponse, {
-                    chat_id: chat_id,
-                    message_id: sentMessage.message_id,
-                    parse_mode: 'Markdown'
-                });
-            } catch (error) {
-                if (!error.message.includes('message is not modified')) {
-                    console.warn('Ошибка финального обновления сообщения:', error.message);
-                }
-            }
-        } else {
-            // Если так и не отправили сообщение, отправляем сейчас с красивым форматированием
-            const beautifiedResponse = formatAIResponse(fullResponse);
-            await bot.sendMessage(chat_id, initialText + beautifiedResponse, {
-                parse_mode: 'Markdown'
-            });
-        }
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        // Показываем финальный ответ
+        await bot.editMessageText(finalText, {
+            chat_id: chat_id,
+            message_id: statusMessage.message_id,
+            parse_mode: 'Markdown'
+        });
 
         return { success: true };
 
@@ -1155,7 +1138,8 @@ const generateWorkoutPlanHTML = (planContent, profileData, planData) => {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Персональный план тренировок</title>
+    <title>💪 Персональный план тренировок</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <style>
         * {
             margin: 0;
@@ -1163,172 +1147,321 @@ const generateWorkoutPlanHTML = (planContent, profileData, planData) => {
             box-sizing: border-box;
         }
         
+        :root {
+            --primary-dark: #0d1b0f;
+            --primary-green: #1a2e1f;
+            --secondary-green: #2d5a3d;
+            --accent-yellow: #ffd700;
+            --accent-light-yellow: #fff59d;
+            --text-light: #e8f5e8;
+            --text-muted: #a5c9aa;
+            --border-green: #3e6b4a;
+            --gradient-primary: linear-gradient(135deg, #0d1b0f 0%, #1a2e1f 50%, #2d5a3d 100%);
+            --gradient-accent: linear-gradient(135deg, #ffd700 0%, #ffed4a 100%);
+            --shadow-dark: 0 10px 40px rgba(13, 27, 15, 0.3);
+            --shadow-light: 0 5px 20px rgba(255, 215, 0, 0.2);
+        }
+        
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--gradient-primary);
             min-height: 100vh;
-            padding: 20px;
+            padding: 15px;
+            color: var(--text-light);
+            line-height: 1.6;
         }
         
         .container {
-            max-width: 800px;
+            max-width: 900px;
             margin: 0 auto;
-            background: white;
-            border-radius: 20px;
-            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            background: var(--primary-green);
+            border-radius: 25px;
+            border: 2px solid var(--border-green);
+            box-shadow: var(--shadow-dark);
             overflow: hidden;
+            position: relative;
+        }
+        
+        .container::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: var(--gradient-accent);
+            animation: glow 3s ease-in-out infinite alternate;
+        }
+        
+        @keyframes glow {
+            from { box-shadow: 0 0 10px rgba(255, 215, 0, 0.5); }
+            to { box-shadow: 0 0 20px rgba(255, 215, 0, 0.8); }
+        }
+        
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateY(30px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
         }
         
         .header {
-            background: linear-gradient(45deg, #FF6B6B, #4ECDC4);
-            color: white;
-            padding: 30px;
+            background: var(--gradient-accent);
+            color: var(--primary-dark);
+            padding: 40px 30px;
             text-align: center;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .header::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: radial-gradient(circle, rgba(255,255,255,0.1) 0%, transparent 70%);
+            animation: rotate 20s linear infinite;
+        }
+        
+        @keyframes rotate {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
         }
         
         .header h1 {
-            font-size: 2.5em;
-            margin-bottom: 10px;
-            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+            font-size: clamp(2rem, 5vw, 3.5rem);
+            font-weight: 700;
+            margin-bottom: 15px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.1);
+            position: relative;
+            z-index: 1;
+            animation: slideIn 1s ease-out;
         }
         
         .header p {
-            font-size: 1.2em;
+            font-size: 1.2rem;
+            font-weight: 400;
             opacity: 0.9;
+            position: relative;
+            z-index: 1;
+            animation: slideIn 1s ease-out 0.2s both;
         }
         
         .user-info {
-            background: #f8f9fa;
-            padding: 20px;
-            border-left: 5px solid #4ECDC4;
-            margin: 20px;
-            border-radius: 10px;
+            background: var(--secondary-green);
+            padding: 30px;
+            margin: 25px;
+            border-radius: 20px;
+            border: 1px solid var(--border-green);
+            animation: slideIn 1s ease-out 0.4s both;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .user-info::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: var(--gradient-accent);
         }
         
         .user-info h3 {
-            color: #333;
-            margin-bottom: 15px;
+            color: var(--accent-yellow);
+            margin-bottom: 20px;
             display: flex;
             align-items: center;
+            font-size: 1.4rem;
+            font-weight: 600;
         }
         
         .user-info h3::before {
             content: "👤";
-            margin-right: 10px;
-            font-size: 1.2em;
+            margin-right: 12px;
+            font-size: 1.5em;
+            filter: drop-shadow(0 0 10px var(--accent-yellow));
         }
         
         .info-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 15px;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
         }
         
         .info-item {
-            padding: 10px;
-            background: white;
-            border-radius: 8px;
-            border: 1px solid #e9ecef;
+            padding: 20px;
+            background: var(--primary-green);
+            border-radius: 15px;
+            border: 1px solid var(--border-green);
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .info-item:hover {
+            transform: translateY(-3px);
+            box-shadow: var(--shadow-light);
+            border-color: var(--accent-yellow);
         }
         
         .info-label {
-            font-weight: bold;
-            color: #666;
-            font-size: 0.9em;
+            font-weight: 500;
+            color: var(--text-muted);
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
         }
         
         .info-value {
-            color: #333;
-            font-size: 1.1em;
-            margin-top: 5px;
+            color: var(--accent-yellow);
+            font-size: 1.3rem;
+            font-weight: 600;
+            font-family: 'JetBrains Mono', monospace;
         }
         
         .day-card {
-            margin: 20px;
-            background: white;
-            border-radius: 15px;
-            box-shadow: 0 5px 15px rgba(0,0,0,0.08);
+            margin: 25px;
+            background: var(--secondary-green);
+            border-radius: 20px;
+            border: 1px solid var(--border-green);
             overflow: hidden;
-            border: 1px solid #e9ecef;
+            animation: slideIn 1s ease-out 0.6s both;
+            transition: all 0.3s ease;
+        }
+        
+        .day-card:hover {
+            transform: translateY(-5px);
+            box-shadow: var(--shadow-light);
         }
         
         .day-card h3 {
-            background: linear-gradient(45deg, #6c5ce7, #fd79a8);
-            color: white;
-            padding: 20px;
+            background: var(--gradient-accent);
+            color: var(--primary-dark);
+            padding: 25px;
             margin: 0;
-            font-size: 1.3em;
+            font-size: 1.4rem;
+            font-weight: 600;
             text-align: center;
+            position: relative;
         }
         
         .exercises {
-            padding: 20px;
+            padding: 30px;
         }
         
         .exercise-row {
             display: grid;
             grid-template-columns: 2fr 1fr 1fr 1fr;
-            gap: 15px;
-            padding: 15px;
-            background: #f8f9fa;
-            border-radius: 10px;
-            margin-bottom: 10px;
-            border-left: 4px solid #6c5ce7;
-            transition: transform 0.2s ease;
+            gap: 20px;
+            padding: 20px;
+            background: var(--primary-green);
+            border-radius: 15px;
+            margin-bottom: 15px;
+            border-left: 4px solid var(--accent-yellow);
+            transition: all 0.3s ease;
+            animation: fadeIn 0.8s ease-out;
         }
         
         .exercise-row:hover {
-            transform: translateX(5px);
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            transform: translateX(10px);
+            box-shadow: var(--shadow-light);
+            background: var(--primary-dark);
         }
         
         .exercise-name {
-            font-weight: bold;
-            color: #333;
+            font-weight: 600;
+            color: var(--text-light);
+            font-size: 1.1rem;
         }
         
         .exercise-sets {
-            color: #e74c3c;
+            color: #ff6b6b;
             font-weight: 500;
+            font-family: 'JetBrains Mono', monospace;
+            background: rgba(255, 107, 107, 0.1);
+            padding: 5px 10px;
+            border-radius: 8px;
+            text-align: center;
         }
         
         .exercise-reps {
-            color: #2ecc71;
+            color: #4ecdc4;
             font-weight: 500;
+            font-family: 'JetBrains Mono', monospace;
+            background: rgba(78, 205, 196, 0.1);
+            padding: 5px 10px;
+            border-radius: 8px;
+            text-align: center;
         }
         
         .exercise-rest {
-            color: #3498db;
+            color: #a78bfa;
             font-weight: 500;
+            font-family: 'JetBrains Mono', monospace;
+            background: rgba(167, 139, 250, 0.1);
+            padding: 5px 10px;
+            border-radius: 8px;
+            text-align: center;
         }
         
         .rest-day {
             text-align: center;
-            color: #666;
-            font-size: 1.2em;
-            padding: 20px;
-            background: #f1f3f4;
-            border-radius: 10px;
+            color: var(--text-muted);
+            font-size: 1.3rem;
+            padding: 40px;
+            background: var(--primary-dark);
+            border-radius: 15px;
+            border: 2px dashed var(--border-green);
+            animation: pulse 2s infinite;
         }
         
-        .footer {
-            background: #2c3e50;
-            color: white;
-            padding: 20px;
-            text-align: center;
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
         }
         
         .tips {
-            margin: 20px;
-            padding: 20px;
-            background: linear-gradient(45deg, #ffecd2, #fcb69f);
-            border-radius: 15px;
-            border-left: 5px solid #f39c12;
+            margin: 25px;
+            padding: 30px;
+            background: var(--secondary-green);
+            border-radius: 20px;
+            border: 1px solid var(--border-green);
+            animation: slideIn 1s ease-out 0.8s both;
+            position: relative;
+        }
+        
+        .tips::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: var(--gradient-accent);
         }
         
         .tips h3 {
-            color: #d35400;
-            margin-bottom: 15px;
+            color: var(--accent-yellow);
+            margin-bottom: 20px;
+            font-size: 1.4rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+        }
+        
+        .tips h3::before {
+            content: "💡";
+            margin-right: 12px;
+            font-size: 1.5em;
+            filter: drop-shadow(0 0 10px var(--accent-yellow));
         }
         
         .tips ul {
@@ -1337,26 +1470,99 @@ const generateWorkoutPlanHTML = (planContent, profileData, planData) => {
         }
         
         .tips li {
-            margin: 8px 0;
-            padding-left: 25px;
+            margin: 12px 0;
+            padding: 15px 20px 15px 50px;
             position: relative;
+            background: var(--primary-green);
+            border-radius: 10px;
+            border-left: 3px solid var(--accent-yellow);
+            transition: all 0.3s ease;
+            color: var(--text-light);
+        }
+        
+        .tips li:hover {
+            transform: translateX(5px);
+            background: var(--primary-dark);
         }
         
         .tips li::before {
-            content: "💡";
+            content: "⚡";
             position: absolute;
-            left: 0;
+            left: 15px;
+            top: 50%;
+            transform: translateY(-50%);
+            font-size: 1.2em;
+            color: var(--accent-yellow);
+        }
+        
+        .footer {
+            background: var(--primary-dark);
+            color: var(--text-light);
+            padding: 30px;
+            text-align: center;
+            border-top: 2px solid var(--accent-yellow);
+            animation: slideIn 1s ease-out 1s both;
+        }
+        
+        .footer p {
+            margin: 5px 0;
+            font-weight: 400;
+        }
+        
+        .footer p:last-child {
+            color: var(--accent-yellow);
+            font-weight: 500;
+        }
+        
+        @media (max-width: 768px) {
+            .container {
+                margin: 10px;
+                border-radius: 20px;
+            }
+            
+            .exercise-row {
+                grid-template-columns: 1fr;
+                gap: 10px;
+                text-align: center;
+            }
+            
+            .info-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .header {
+                padding: 30px 20px;
+            }
+            
+            .user-info, .day-card, .tips {
+                margin: 15px;
+                padding: 20px;
+            }
         }
         
         @media print {
             body {
                 background: white;
                 padding: 0;
+                color: black;
             }
             
             .container {
                 box-shadow: none;
                 border-radius: 0;
+                border: none;
+            }
+            
+            .container::before {
+                display: none;
+            }
+            
+            .header::before {
+                display: none;
+            }
+            
+            * {
+                animation: none !important;
             }
         }
     </style>
@@ -1465,7 +1671,8 @@ const generateNutritionPlanHTML = (planContent, profileData, planData) => {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Персональный план питания</title>
+    <title>🥗 Персональный план питания</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <style>
         * {
             margin: 0;
@@ -1473,101 +1680,371 @@ const generateNutritionPlanHTML = (planContent, profileData, planData) => {
             box-sizing: border-box;
         }
         
+        :root {
+            --primary-dark: #0d1b0f;
+            --primary-green: #1a2e1f;
+            --secondary-green: #2d5a3d;
+            --accent-yellow: #ffd700;
+            --accent-light-yellow: #fff59d;
+            --text-light: #e8f5e8;
+            --text-muted: #a5c9aa;
+            --border-green: #3e6b4a;
+            --gradient-primary: linear-gradient(135deg, #0d1b0f 0%, #1a2e1f 50%, #2d5a3d 100%);
+            --gradient-accent: linear-gradient(135deg, #ffd700 0%, #ffed4a 100%);
+            --shadow-dark: 0 10px 40px rgba(13, 27, 15, 0.3);
+            --shadow-light: 0 5px 20px rgba(255, 215, 0, 0.2);
+            --meal-breakfast: #ff6b6b;
+            --meal-lunch: #4ecdc4;
+            --meal-dinner: #a78bfa;
+            --meal-snack: #feca57;
+        }
+        
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--gradient-primary);
             min-height: 100vh;
-            padding: 20px;
+            padding: 15px;
+            color: var(--text-light);
+            line-height: 1.6;
         }
         
         .container {
-            max-width: 800px;
+            max-width: 900px;
             margin: 0 auto;
-            background: white;
-            border-radius: 20px;
-            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            background: var(--primary-green);
+            border-radius: 25px;
+            border: 2px solid var(--border-green);
+            box-shadow: var(--shadow-dark);
             overflow: hidden;
+            position: relative;
+        }
+        
+        .container::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: var(--gradient-accent);
+            animation: glow 3s ease-in-out infinite alternate;
+        }
+        
+        @keyframes glow {
+            from { box-shadow: 0 0 10px rgba(255, 215, 0, 0.5); }
+            to { box-shadow: 0 0 20px rgba(255, 215, 0, 0.8); }
+        }
+        
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateY(30px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+        
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.05); }
         }
         
         .header {
-            background: linear-gradient(45deg, #FF9A8B, #A8E6CF);
-            color: white;
-            padding: 30px;
+            background: var(--gradient-accent);
+            color: var(--primary-dark);
+            padding: 40px 30px;
             text-align: center;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .header::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: radial-gradient(circle, rgba(255,255,255,0.1) 0%, transparent 70%);
+            animation: rotate 15s linear infinite;
+        }
+        
+        @keyframes rotate {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
         }
         
         .header h1 {
-            font-size: 2.5em;
-            margin-bottom: 10px;
-            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+            font-size: clamp(2rem, 5vw, 3.5rem);
+            font-weight: 700;
+            margin-bottom: 15px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.1);
+            position: relative;
+            z-index: 1;
+            animation: slideIn 1s ease-out;
+        }
+        
+        .header p {
+            font-size: 1.2rem;
+            font-weight: 400;
+            opacity: 0.9;
+            position: relative;
+            z-index: 1;
+            animation: slideIn 1s ease-out 0.2s both;
         }
         
         .user-info {
-            background: #f8f9fa;
-            padding: 20px;
-            border-left: 5px solid #A8E6CF;
-            margin: 20px;
-            border-radius: 10px;
+            background: var(--secondary-green);
+            padding: 30px;
+            margin: 25px;
+            border-radius: 20px;
+            border: 1px solid var(--border-green);
+            animation: slideIn 1s ease-out 0.4s both;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .user-info::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: var(--gradient-accent);
+        }
+        
+        .user-info h3 {
+            color: var(--accent-yellow);
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            font-size: 1.4rem;
+            font-weight: 600;
+        }
+        
+        .user-info h3::before {
+            content: "👤";
+            margin-right: 12px;
+            font-size: 1.5em;
+            filter: drop-shadow(0 0 10px var(--accent-yellow));
         }
         
         .info-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 15px;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
         }
         
         .info-item {
-            padding: 10px;
-            background: white;
-            border-radius: 8px;
-            border: 1px solid #e9ecef;
+            padding: 20px;
+            background: var(--primary-green);
+            border-radius: 15px;
+            border: 1px solid var(--border-green);
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .info-item:hover {
+            transform: translateY(-3px);
+            box-shadow: var(--shadow-light);
+            border-color: var(--accent-yellow);
+        }
+        
+        .info-label {
+            font-weight: 500;
+            color: var(--text-muted);
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+        }
+        
+        .info-value {
+            color: var(--accent-yellow);
+            font-size: 1.3rem;
+            font-weight: 600;
+            font-family: 'JetBrains Mono', monospace;
         }
         
         .day-card {
-            margin: 20px;
-            background: white;
-            border-radius: 15px;
-            box-shadow: 0 5px 15px rgba(0,0,0,0.08);
+            margin: 25px;
+            background: var(--secondary-green);
+            border-radius: 20px;
+            border: 1px solid var(--border-green);
             overflow: hidden;
-            border: 1px solid #e9ecef;
+            animation: slideIn 1s ease-out 0.6s both;
+            transition: all 0.3s ease;
+        }
+        
+        .day-card:hover {
+            transform: translateY(-5px);
+            box-shadow: var(--shadow-light);
         }
         
         .day-card h3 {
-            background: linear-gradient(45deg, #FF9A8B, #FECFEF);
-            color: white;
-            padding: 20px;
+            background: var(--gradient-accent);
+            color: var(--primary-dark);
+            padding: 25px;
             margin: 0;
-            font-size: 1.3em;
+            font-size: 1.4rem;
+            font-weight: 600;
             text-align: center;
+            position: relative;
         }
         
         .meals {
-            padding: 20px;
+            padding: 30px;
         }
         
         .meal-title {
-            color: #2d3436;
-            margin: 15px 0 10px 0;
-            font-size: 1.2em;
-            padding: 10px;
-            background: linear-gradient(45deg, #fd79a8, #fdcb6e);
-            border-radius: 8px;
-            color: white;
+            margin: 20px 0 15px 0;
+            font-size: 1.3rem;
+            font-weight: 600;
+            padding: 15px 20px;
+            border-radius: 15px;
+            color: var(--text-light);
+            display: flex;
+            align-items: center;
+            position: relative;
+            overflow: hidden;
+            transition: all 0.3s ease;
+            animation: fadeIn 0.8s ease-out;
         }
         
+        .meal-title:hover {
+            transform: translateX(5px);
+            box-shadow: var(--shadow-light);
+        }
+        
+        .meal-title::before {
+            margin-right: 12px;
+            font-size: 1.5em;
+            filter: drop-shadow(0 0 5px rgba(0,0,0,0.3));
+        }
+        
+        .meal-title:nth-of-type(1) {
+            background: linear-gradient(135deg, var(--meal-breakfast), #ff8a80);
+        }
+        .meal-title:nth-of-type(1)::before { content: "🌅"; }
+        
+        .meal-title:nth-of-type(2) {
+            background: linear-gradient(135deg, var(--meal-lunch), #4dd0e1);
+        }
+        .meal-title:nth-of-type(2)::before { content: "☀️"; }
+        
+        .meal-title:nth-of-type(3) {
+            background: linear-gradient(135deg, var(--meal-dinner), #b39ddb);
+        }
+        .meal-title:nth-of-type(3)::before { content: "🌙"; }
+        
+        .meal-title:nth-of-type(4) {
+            background: linear-gradient(135deg, var(--meal-snack), #ffcc02);
+        }
+        .meal-title:nth-of-type(4)::before { content: "🍎"; }
+        
         .meal-item {
-            margin: 8px 0;
-            padding: 8px 15px;
-            background: #f1f3f4;
-            border-radius: 5px;
-            border-left: 3px solid #fd79a8;
+            margin: 12px 0;
+            padding: 15px 20px 15px 50px;
+            background: var(--primary-green);
+            border-radius: 12px;
+            border-left: 4px solid var(--accent-yellow);
+            transition: all 0.3s ease;
+            position: relative;
+            color: var(--text-light);
+            animation: fadeIn 0.8s ease-out;
+        }
+        
+        .meal-item:hover {
+            transform: translateX(8px);
+            background: var(--primary-dark);
+            box-shadow: var(--shadow-light);
+        }
+        
+        .meal-item::before {
+            content: "🍽️";
+            position: absolute;
+            left: 15px;
+            top: 50%;
+            transform: translateY(-50%);
+            font-size: 1.2em;
+            color: var(--accent-yellow);
         }
         
         .footer {
-            background: #2c3e50;
-            color: white;
-            padding: 20px;
+            background: var(--primary-dark);
+            color: var(--text-light);
+            padding: 30px;
             text-align: center;
+            border-top: 2px solid var(--accent-yellow);
+            animation: slideIn 1s ease-out 1s both;
+        }
+        
+        .footer p {
+            margin: 5px 0;
+            font-weight: 400;
+        }
+        
+        .footer p:last-child {
+            color: var(--accent-yellow);
+            font-weight: 500;
+            animation: pulse 2s infinite;
+        }
+        
+        @media (max-width: 768px) {
+            .container {
+                margin: 10px;
+                border-radius: 20px;
+            }
+            
+            .info-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .header {
+                padding: 30px 20px;
+            }
+            
+            .user-info, .day-card {
+                margin: 15px;
+                padding: 20px;
+            }
+            
+            .meals {
+                padding: 20px;
+            }
+            
+            .meal-item {
+                padding: 12px 15px 12px 40px;
+            }
+        }
+        
+        @media print {
+            body {
+                background: white;
+                padding: 0;
+                color: black;
+            }
+            
+            .container {
+                box-shadow: none;
+                border-radius: 0;
+                border: none;
+            }
+            
+            .container::before {
+                display: none;
+            }
+            
+            .header::before {
+                display: none;
+            }
+            
+            * {
+                animation: none !important;
+            }
         }
     </style>
 </head>
@@ -3210,8 +3687,9 @@ const setupBot = (app) => {
         // Если сообщение не попало ни в одну из категорий выше, обрабатываем универсальным агентом
         if (msg.text && !msg.text.startsWith('/')) {
             try {
-                // СРАЗУ показываем индикатор печатания ДО всех остальных операций - для мгновенной реакции!
+                // СРАЗУ показываем индикатор печатания и красивые статусы
                 await bot.sendChatAction(chat_id, 'typing');
+                const statusMessage = await bot.sendMessage(chat_id, '🤔 Обрабатываю ваше сообщение...');
                 
                 // Параллельно получаем профиль пользователя и запускаем универсального агента 
                 const profilePromise = supabase
@@ -3219,6 +3697,12 @@ const setupBot = (app) => {
                     .select('first_name, gender, age, height_cm, weight_kg, goal, id')
                     .eq('telegram_id', telegram_id)
                     .single();
+
+                await new Promise(resolve => setTimeout(resolve, 600));
+                await bot.editMessageText('💭 Анализирую содержание...', {
+                    chat_id: chat_id,
+                    message_id: statusMessage.message_id
+                });
 
                 // Начинаем обработку сообщения ПАРАЛЛЕЛЬНО с получением профиля
                 const { data: profile } = await profilePromise;
@@ -3246,7 +3730,7 @@ const setupBot = (app) => {
 
                                 await bot.editMessageText(responseText, {
                                     chat_id: chat_id,
-                                    message_id: undefined,
+                                    message_id: statusMessage.message_id,
                                     parse_mode: 'Markdown',
                                     reply_markup: {
                                         inline_keyboard: [
@@ -3257,7 +3741,7 @@ const setupBot = (app) => {
                             } else {
                                 await bot.editMessageText(analysisData.response_text, {
                                     chat_id: chat_id,
-                                    message_id: undefined,
+                                    message_id: statusMessage.message_id,
                                     parse_mode: 'Markdown'
                                 });
                             }
@@ -3289,13 +3773,13 @@ const setupBot = (app) => {
                                     
                                     await bot.editMessageText(responseText, {
                                         chat_id: chat_id,
-                                        message_id: undefined,
+                                        message_id: statusMessage.message_id,
                                         parse_mode: 'Markdown'
                                     });
                                 } else {
                                     await bot.editMessageText(`❌ Ошибка при добавлении воды: ${result.error}`, {
                                         chat_id: chat_id,
-                                        message_id: undefined
+                                        message_id: statusMessage.message_id
                                     });
                                 }
                             } else {
@@ -3384,13 +3868,13 @@ const setupBot = (app) => {
 
                                 await bot.editMessageText(responseText, {
                                     chat_id: chat_id,
-                                    message_id: undefined,
+                                    message_id: statusMessage.message_id,
                                     parse_mode: 'Markdown'
                                 });
                             } else {
                                 await bot.editMessageText(`❌ Ошибка при сохранении тренировки: ${result.error}`, {
                                     chat_id: chat_id,
-                                    message_id: undefined
+                                    message_id: statusMessage.message_id
                                 });
                             }
                             break;
@@ -3402,13 +3886,13 @@ const setupBot = (app) => {
                             if (report.success) {
                                 await bot.editMessageText(report.text, {
                                     chat_id: chat_id,
-                                    message_id: undefined,
+                                    message_id: statusMessage.message_id,
                                     parse_mode: 'Markdown'
                                 });
                             } else {
                                 await bot.editMessageText('❌ Не удалось сгенерировать отчет. Возможно, у вас нет данных за сегодня.', {
                                     chat_id: chat_id,
-                                    message_id: undefined
+                                    message_id: statusMessage.message_id
                                 });
                             }
                             break;
@@ -3431,13 +3915,13 @@ const setupBot = (app) => {
 
                                 await bot.editMessageText(responseText, {
                                     chat_id: chat_id,
-                                    message_id: undefined,
+                                    message_id: statusMessage.message_id,
                                     parse_mode: 'Markdown'
                                 });
                             } else {
                                 await bot.editMessageText(analysisData.response_text, {
                                     chat_id: chat_id,
-                                    message_id: undefined,
+                                    message_id: statusMessage.message_id,
                                     parse_mode: 'Markdown'
                                 });
                             }
@@ -3449,25 +3933,25 @@ const setupBot = (app) => {
                             break;
 
                         default:
-                            // Все остальные случаи - дружелюбный ответ с потоковым выводом
-                            if (shouldUseStreaming(analysisData.response_text)) {
-                                await streamMessage(chat_id, analysisData.response_text, { parse_mode: 'Markdown' });
-                            } else {
-                                await bot.sendMessage(chat_id, analysisData.response_text, { parse_mode: 'Markdown' });
-                            }
+                            // Все остальные случаи - дружелюбный ответ через статусное сообщение
+                            await bot.editMessageText(analysisData.response_text, {
+                                chat_id: chat_id,
+                                message_id: statusMessage.message_id,
+                                parse_mode: 'Markdown'
+                            });
                             break;
                     }
                 } else {
                     await bot.editMessageText('Извините, не смог понять ваше сообщение. Попробуйте использовать основные функции бота через меню.', {
                         chat_id: chat_id,
-                        message_id: undefined
+                        message_id: statusMessage.message_id
                     });
                 }
             } catch (error) {
                 console.error("Ошибка при обработке текстового сообщения:", error);
                 await bot.editMessageText('Произошла ошибка при обработке сообщения.', {
                     chat_id: chat_id,
-                    message_id: undefined
+                    message_id: statusMessage.message_id
                 });
             }
         }
