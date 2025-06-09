@@ -1209,13 +1209,28 @@ const setupBot = (app) => {
                          preferred_types: ['mixed'] // пока оставим по умолчанию
                      };
 
-                     // Сохраняем или обновляем данные
-                     const { error: saveError } = await supabase
+                     // Сначала пытаемся обновить существующую запись
+                     const { data: existingData } = await supabase
                          .from('workout_plan_data')
-                         .upsert(workoutData, { 
-                             onConflict: 'user_id',
-                             ignoreDuplicates: false 
-                         });
+                         .select('user_id')
+                         .eq('user_id', profile.id)
+                         .single();
+
+                     let saveError;
+                     if (existingData) {
+                         // Обновляем существующую запись
+                         const { error } = await supabase
+                             .from('workout_plan_data')
+                             .update(workoutData)
+                             .eq('user_id', profile.id);
+                         saveError = error;
+                     } else {
+                         // Создаем новую запись
+                         const { error } = await supabase
+                             .from('workout_plan_data')
+                             .insert(workoutData);
+                         saveError = error;
+                     }
 
                      if (saveError) throw saveError;
 
@@ -1334,13 +1349,28 @@ const setupBot = (app) => {
                         supplements_interest: 'no' // пока по умолчанию
                     };
 
-                    // Сохраняем или обновляем данные
-                    const { error: saveError } = await supabase
+                    // Сначала пытаемся обновить существующую запись
+                    const { data: existingData } = await supabase
                         .from('nutrition_plan_data')
-                        .upsert(nutritionData, { 
-                            onConflict: 'user_id',
-                            ignoreDuplicates: false 
-                        });
+                        .select('user_id')
+                        .eq('user_id', profile.id)
+                        .single();
+
+                    let saveError;
+                    if (existingData) {
+                        // Обновляем существующую запись
+                        const { error } = await supabase
+                            .from('nutrition_plan_data')
+                            .update(nutritionData)
+                            .eq('user_id', profile.id);
+                        saveError = error;
+                    } else {
+                        // Создаем новую запись
+                        const { error } = await supabase
+                            .from('nutrition_plan_data')
+                            .insert(nutritionData);
+                        saveError = error;
+                    }
 
                     if (saveError) throw saveError;
 
