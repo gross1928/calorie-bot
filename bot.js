@@ -31,6 +31,123 @@ const questionState = {};
 // Состояние для анализа медицинских данных
 const medicalAnalysisState = {};
 
+// --- Typing Indicator and Streaming Functions ---
+const showTyping = async (chat_id, duration = 3000) => {
+    try {
+        await bot.sendChatAction(chat_id, 'typing');
+        // Повторяем каждые 5 секунд, так как typing action истекает
+        const interval = setInterval(() => {
+            bot.sendChatAction(chat_id, 'typing');
+        }, 4000);
+        
+        setTimeout(() => {
+            clearInterval(interval);
+        }, duration);
+    } catch (error) {
+        console.error('Error showing typing indicator:', error);
+    }
+};
+
+const streamMessage = async (chat_id, fullText, options = {}) => {
+    try {
+        // Показываем индикатор печатания
+        await bot.sendChatAction(chat_id, 'typing');
+        
+        // Разбиваем текст на части для постепенного показа
+        const chunks = [];
+        const words = fullText.split(' ');
+        let currentChunk = '';
+        
+        for (const word of words) {
+            if (currentChunk.length + word.length + 1 <= 50) { // Ограничиваем размер чанка
+                currentChunk += (currentChunk ? ' ' : '') + word;
+            } else {
+                if (currentChunk) chunks.push(currentChunk);
+                currentChunk = word;
+            }
+        }
+        if (currentChunk) chunks.push(currentChunk);
+        
+        // Отправляем первый чанк
+        const sentMessage = await bot.sendMessage(chat_id, chunks[0] + '...', options);
+        
+        // Постепенно добавляем остальные части
+        let accumulatedText = chunks[0];
+        
+        for (let i = 1; i < chunks.length; i++) {
+            await new Promise(resolve => setTimeout(resolve, 800 + Math.random() * 400)); // 800-1200мс задержка
+            accumulatedText += ' ' + chunks[i];
+            
+            const isLast = i === chunks.length - 1;
+            const displayText = isLast ? accumulatedText : accumulatedText + '...';
+            
+            try {
+                await bot.editMessageText(displayText, {
+                    chat_id: chat_id,
+                    message_id: sentMessage.message_id,
+                    ...options
+                });
+            } catch (editError) {
+                // Если редактирование не удалось, прерываем
+                console.error('Error editing message during streaming:', editError);
+                break;
+            }
+        }
+        
+        return sentMessage;
+    } catch (error) {
+        console.error('Error in streamMessage:', error);
+        // Fallback - отправляем обычное сообщение
+        return await bot.sendMessage(chat_id, fullText, options);
+    }
+};
+
+const streamLongMessage = async (chat_id, fullText, options = {}) => {
+    try {
+        await bot.sendChatAction(chat_id, 'typing');
+        
+        // Для длинных сообщений используем другую стратегию - по предложениям
+        const sentences = fullText.match(/[^\.!?]+[\.!?]+/g) || [fullText];
+        
+        if (sentences.length <= 1) {
+            return await streamMessage(chat_id, fullText, options);
+        }
+        
+        // Отправляем первое предложение
+        const sentMessage = await bot.sendMessage(chat_id, sentences[0] + '\n\n_Формирую ответ..._', {
+            parse_mode: 'Markdown',
+            ...options
+        });
+        
+        let accumulatedText = sentences[0];
+        
+        for (let i = 1; i < sentences.length; i++) {
+            await new Promise(resolve => setTimeout(resolve, 1500 + Math.random() * 500)); // 1.5-2сек задержка
+            accumulatedText += ' ' + sentences[i];
+            
+            const isLast = i === sentences.length - 1;
+            const displayText = isLast ? accumulatedText : accumulatedText + '\n\n_Дополняю информацию..._';
+            
+            try {
+                await bot.editMessageText(displayText, {
+                    chat_id: chat_id,
+                    message_id: sentMessage.message_id,
+                    parse_mode: isLast ? options.parse_mode : 'Markdown',
+                    ...options
+                });
+            } catch (editError) {
+                console.error('Error editing long message during streaming:', editError);
+                break;
+            }
+        }
+        
+        return sentMessage;
+    } catch (error) {
+        console.error('Error in streamLongMessage:', error);
+        return await bot.sendMessage(chat_id, fullText, options);
+    }
+};
+
 // --- Helper Functions ---
 const getDateRange = (period) => {
     const now = new Date();
@@ -247,7 +364,7 @@ ${additionalData.timeframe_months ? `- Срок достижения цели: $
 
 ## 📊 Общая информация
 - **Цель:** [цель тренировок]
-- **Уровень:** [уровень опыта]
+- **Уровень:** [уровень опыта] 
 - **Частота:** [количество тренировок в неделю]
 
 ## 📅 Недельный план
@@ -365,65 +482,84 @@ ${profileData.timeframe_months ? `- Срок достижения цели: ${pr
     }
 };
 
-const answerUserQuestion = async (question, profileData = null) => {
+const answerUserQuestionStream = async (chat_id, message_id, question, profileData = null) => {
     try {
-        console.log('Answering user question with OpenAI...');
-        
-        const profileInfo = profileData ? `
-ПРОФИЛЬ ПОЛЬЗОВАТЕЛЯ:
+        let systemPrompt = `Ты — дружелюбный и знающий ассистент по здоровому образу жизни. Дай подробный и полезный ответ на вопрос пользователя. Всегда отвечай на русском языке. Форматируй ответ, используя Markdown для лучшей читаемости: **жирный для акцентов**, *курсив для терминов*, и списки для перечислений.`;
+
+        if (profileData) {
+            systemPrompt += `\n\nКонтекст пользователя (используй его для персонализации ответа):
 - Имя: ${profileData.first_name}
-- Пол: ${profileData.gender === 'male' ? 'мужской' : 'женский'}
-- Возраст: ${profileData.age} лет
-- Рост: ${profileData.height_cm} см
-- Текущий вес: ${profileData.weight_kg} кг
-${profileData.target_weight_kg ? `- Целевой вес: ${profileData.target_weight_kg} кг` : ''}
-${profileData.timeframe_months ? `- Срок достижения цели: ${profileData.timeframe_months} месяцев` : ''}
-- Цель: ${profileData.goal === 'lose_weight' ? 'похудение' : profileData.goal === 'gain_mass' ? 'набор массы' : 'поддержание веса'}
-${profileData.daily_calories ? `- Дневная норма калорий: ${profileData.daily_calories} ккал` : ''}
-${profileData.daily_protein ? `- Белки: ${profileData.daily_protein} г` : ''}
-${profileData.daily_fat ? `- Жиры: ${profileData.daily_fat} г` : ''}
-${profileData.daily_carbs ? `- Углеводы: ${profileData.daily_carbs} г` : ''}
-` : '';
+- Пол: ${profileData.gender}, Возраст: ${profileData.age} лет
+- Рост: ${profileData.height_cm} см, Вес: ${profileData.weight_kg} кг
+- Цель: ${profileData.goal}`;
+        }
 
-        const systemPrompt = `Ты - умный помощник по питанию и здоровому образу жизни. Ты работаешь в Telegram боте для подсчета калорий.
-
-${profileInfo}
-
-ТВОИ ВОЗМОЖНОСТИ:
-- Отвечать на вопросы о питании, калориях, КБЖУ, диетах
-- Давать советы по здоровому питанию и тренировкам
-- Помогать с планированием питания
-- Отвечать на вопросы о продуктах и их калорийности
-- Давать рекомендации по достижению целей (похудение/набор массы/поддержание веса)
-
-ПРАВИЛА:
-1. Отвечай кратко и по делу (максимум 500 символов)
-2. Используй эмодзи для лучшего восприятия
-3. Если вопрос не по теме питания/здоровья, вежливо перенаправь к основным функциям бота
-4. Учитывай профиль пользователя в ответах
-5. Не давай медицинских диагнозов и советов, рекомендуй обратиться к врачу при серьезных вопросах
-
-ПРИМЕРЫ ХОРОШИХ ОТВЕТОВ:
-- "🥗 Для похудения важен дефицит калорий. Твоя норма ${profileData?.daily_calories || 'XXXX'} ккал, старайся есть на 300-500 ккал меньше."
-- "🍎 Яблоко содержит примерно 50 ккал на 100г. Отличный перекус!"
-- "💪 Для набора мышечной массы нужно 1.6-2.2г белка на кг веса. У тебя это ${profileData?.daily_protein || 'XX'}г в день."`;
-
-        const response = await openai.chat.completions.create({
+        const stream = await openai.chat.completions.create({
             model: 'gpt-4o',
             messages: [
                 { role: 'system', content: systemPrompt },
                 { role: 'user', content: question }
             ],
-            max_tokens: 300,
+            stream: true,
+            max_tokens: 1000,
         });
 
-        const answer = response.choices[0].message.content;
-        return { success: true, answer };
+        let fullResponse = '';
+        let lastUpdateTime = 0;
+        const updateInterval = 800; // мс
+        const initialText = `🎤 **Ваш вопрос:** "${question}"\n\n`;
+
+        for await (const chunk of stream) {
+            const content = chunk.choices[0]?.delta?.content || '';
+            if (content) {
+                fullResponse += content;
+                const now = Date.now();
+                if (now - lastUpdateTime > updateInterval) {
+                    try {
+                        await bot.editMessageText(initialText + fullResponse + '▌', {
+                            chat_id: chat_id,
+                            message_id: message_id,
+                            parse_mode: 'Markdown'
+                        });
+                        lastUpdateTime = now;
+                    } catch (error) {
+                        if (!error.message.includes('message is not modified')) {
+                            console.warn('Промежуточная ошибка при обновлении сообщения (Markdown):', error.message);
+                        }
+                    }
+                }
+            }
+        }
+
+        await bot.editMessageText(initialText + fullResponse, {
+            chat_id: chat_id,
+            message_id: message_id,
+            parse_mode: 'Markdown'
+        });
+
+        return { success: true };
 
     } catch (error) {
-        console.error('Error answering user question:', error);
-        return { success: false, error: error.message };
+        console.error('Критическая ошибка в answerUserQuestionStream:', error);
+        try {
+            await bot.editMessageText(`Произошла ошибка при генерации ответа. Пожалуйста, попробуйте еще раз.`, {
+                chat_id: chat_id,
+                message_id: message_id
+            });
+        } catch (e) {
+            console.error('Не удалось отправить сообщение об ошибке пользователю:', e);
+        }
+        return { success: false, error: 'Failed to generate or send answer.' };
     }
+};
+
+// Функция-заглушка для совместимости
+const answerUserQuestion = async (question, profileData = null) => {
+    // Эта функция больше не будет вызываться для потоковой передачи,
+    // но оставляем ее для возможного использования в других местах
+    // или для тестов.
+    console.warn("Вызвана устаревшая функция answerUserQuestion");
+    return { success: false, answer: "Произошла ошибка конфигурации." };
 };
 
 // --- Voice Message Processing ---
@@ -1752,9 +1888,6 @@ const showProfileMenu = async (chat_id, telegram_id) => {
                     [
                         { text: '🎯 Цель', callback_data: 'profile_edit_goal' },
                         { text: '👤 Пол', callback_data: 'profile_edit_gender' }
-                    ],
-                    [
-                        { text: '🔄 Пересчитать нормы', callback_data: 'profile_recalculate' }
                     ]
                 ]
             }
@@ -2264,11 +2397,34 @@ const setupBot = (app) => {
 
         // --- Photo Handler ---
         if (msg.photo) {
-            const thinkingMessage = await bot.sendMessage(chat_id, 'Получил ваше фото! 📸 Анализирую с помощью ИИ, это может занять несколько секунд...');
+            await bot.sendChatAction(chat_id, 'typing');
+            showTyping(chat_id, 15000); // 15 секунд для анализа фото
+            
+            const thinkingMessage = await bot.sendMessage(chat_id, '📸 Получил ваше фото! Анализирую...');
+            
             try {
                 const photo = msg.photo[msg.photo.length - 1];
                 const fileInfo = await bot.getFile(photo.file_id);
                 const photoUrl = `https://api.telegram.org/file/bot${token}/${fileInfo.file_path}`;
+                
+                // Постепенное обновление статуса
+                setTimeout(async () => {
+                    try {
+                        await bot.editMessageText('📸 Распознаю блюда на фото...', {
+                            chat_id: thinkingMessage.chat.id,
+                            message_id: thinkingMessage.message_id
+                        });
+                    } catch (e) { /* игнорируем ошибки обновления */ }
+                }, 2000);
+                
+                setTimeout(async () => {
+                    try {
+                        await bot.editMessageText('📸 Анализирую состав и калорийность...', {
+                            chat_id: thinkingMessage.chat.id,
+                            message_id: thinkingMessage.message_id
+                        });
+                    } catch (e) { /* игнорируем ошибки обновления */ }
+                }, 6000);
                 
                 const recognitionResult = await recognizeFoodFromPhoto(photoUrl);
 
@@ -2311,6 +2467,7 @@ const setupBot = (app) => {
 
                 // --- Voice Message Handler ---
         if (msg.voice) {
+            bot.sendChatAction(chat_id, 'typing');
             const thinkingMessage = await bot.sendMessage(chat_id, '🎤 Получил голосовое сообщение! Преобразую речь в текст...');
             try {
                 const voice = msg.voice;
@@ -2555,22 +2712,8 @@ const setupBot = (app) => {
                                 break;
 
                             case 'answer_question':
-                                // Отвечаем на вопрос
-                                const questionResult = await answerUserQuestion(transcriptionResult.text, profile);
-                                
-                                if (questionResult.success) {
-                                    await bot.editMessageText(`🎤 **Ваш вопрос:** "${transcriptionResult.text}"\n\n${questionResult.answer}`, {
-                                        chat_id: thinkingMessage.chat.id,
-                                        message_id: thinkingMessage.message_id,
-                                        parse_mode: 'Markdown'
-                                    });
-                                } else {
-                                    await bot.editMessageText(analysisData.response_text, {
-                                        chat_id: thinkingMessage.chat.id,
-                                        message_id: thinkingMessage.message_id,
-                                        parse_mode: 'Markdown'
-                                    });
-                                }
+                                // Отвечаем на вопрос в потоковом режиме
+                                await answerUserQuestionStream(thinkingMessage.chat.id, thinkingMessage.message_id, transcriptionResult.text, profile);
                                 break;
 
                             default:
@@ -2715,6 +2858,7 @@ const setupBot = (app) => {
         if (isWaitingForQuestion) {
             // Пользователь задает вопрос - обрабатываем его через AI
             delete questionState[telegram_id];
+            bot.sendChatAction(chat_id, 'typing');
             const thinkingMessage = await bot.sendMessage(chat_id, '🤔 Думаю над вашим вопросом...');
             
             try {
@@ -2725,20 +2869,8 @@ const setupBot = (app) => {
                     .eq('telegram_id', telegram_id)
                     .single();
 
-                const questionResult = await answerUserQuestion(msg.text, profile);
+                await answerUserQuestionStream(thinkingMessage.chat.id, thinkingMessage.message_id, msg.text, profile);
 
-                if (questionResult.success) {
-                    await bot.editMessageText(questionResult.answer, {
-                        chat_id: thinkingMessage.chat.id,
-                        message_id: thinkingMessage.message_id,
-                        parse_mode: 'Markdown'
-                    });
-                } else {
-                    await bot.editMessageText('🤖 Извините, произошла ошибка при обработке вашего вопроса. Попробуйте еще раз или используйте основные функции бота.', {
-                        chat_id: thinkingMessage.chat.id,
-                        message_id: thinkingMessage.message_id
-                    });
-                }
             } catch (error) {
                 console.error("Error answering user question:", error);
                 await bot.editMessageText('🤖 Извините, произошла ошибка при обработке вашего вопроса. Попробуйте еще раз или используйте основные функции бота.', {
@@ -2903,6 +3035,7 @@ const setupBot = (app) => {
 
         if (manualAddStep === 'awaiting_input') {
                 delete manualAddState[telegram_id];
+            bot.sendChatAction(chat_id, 'typing');
             const thinkingMessage = await bot.sendMessage(chat_id, 'Получил ваш запрос! ✍️ Анализирую с помощью ИИ, это может занять несколько секунд...');
             try {
                 const parts = msg.text.split(',').map(p => p.trim());
@@ -3097,6 +3230,7 @@ const setupBot = (app) => {
         // --- Universal Text Message Handler ---
         // Если сообщение не попало ни в одну из категорий выше, обрабатываем универсальным агентом
         if (msg.text && !msg.text.startsWith('/')) {
+            bot.sendChatAction(chat_id, 'typing');
             const thinkingMessage = await bot.sendMessage(chat_id, '🤔 Анализирую ваше сообщение...');
             
             try {
@@ -3330,22 +3464,8 @@ const setupBot = (app) => {
                             break;
 
                         case 'answer_question':
-                            // Отвечаем на вопрос
-                            const questionResult = await answerUserQuestion(msg.text, profile);
-                            
-                            if (questionResult.success) {
-                                await bot.editMessageText(questionResult.answer, {
-                                    chat_id: thinkingMessage.chat.id,
-                                    message_id: thinkingMessage.message_id,
-                                    parse_mode: 'Markdown'
-                                });
-                            } else {
-                                await bot.editMessageText(analysisData.response_text, {
-                                    chat_id: thinkingMessage.chat.id,
-                                    message_id: thinkingMessage.message_id,
-                                    parse_mode: 'Markdown'
-                                });
-                            }
+                            // Отвечаем на вопрос в потоковом режиме
+                            await answerUserQuestionStream(thinkingMessage.chat.id, thinkingMessage.message_id, msg.text, profile);
                             break;
 
                         default:
@@ -3475,11 +3595,43 @@ const setupBot = (app) => {
                 if (existingData) {
                     // Данные есть, генерируем план сразу
                     const planTypeName = planType === 'workout' ? 'тренировок' : 'питания';
-                    const loadingMessage = await bot.editMessageText(`🤖 Использую ваши сохраненные предпочтения для создания нового плана ${planTypeName}... Это может занять до 30 секунд.`, {
+                    
+                    // Показываем индикатор печатания
+                    await bot.sendChatAction(chat_id, 'typing');
+                    
+                    const loadingMessage = await bot.editMessageText(`🤖 Анализирую ваши данные...`, {
                         chat_id, message_id: msg.message_id
                     });
+                    
+                    // Запускаем длительный типинг-индикатор
+                    showTyping(chat_id, 30000);
 
                     try {
+                        // Постепенное обновление прогресса
+                        setTimeout(async () => {
+                            try {
+                                await bot.editMessageText(`🤖 Формирую персональные рекомендации для ${profile.first_name}...`, {
+                                    chat_id, message_id: loadingMessage.message_id
+                                });
+                            } catch (e) { /* игнорируем ошибки обновления */ }
+                        }, 3000);
+                        
+                        setTimeout(async () => {
+                            try {
+                                await bot.editMessageText(`🤖 Создаю план ${planTypeName} с учетом ваших целей...`, {
+                                    chat_id, message_id: loadingMessage.message_id
+                                });
+                            } catch (e) { /* игнорируем ошибки обновления */ }
+                        }, 8000);
+                        
+                        setTimeout(async () => {
+                            try {
+                                await bot.editMessageText(`🤖 Финализирую детали плана... Почти готово!`, {
+                                    chat_id, message_id: loadingMessage.message_id
+                                });
+                            } catch (e) { /* игнорируем ошибки обновления */ }
+                        }, 15000);
+                        
                         let planResult;
                         if (planType === 'workout') {
                             const workoutData = {
@@ -4182,6 +4334,35 @@ const setupBot = (app) => {
 
                      if (saveError) throw saveError;
 
+                     // Показываем индикатор печатания и обновляем статус
+                     await bot.sendChatAction(chat_id, 'typing');
+                     showTyping(chat_id, 25000);
+                     
+                     // Постепенное обновление прогресса
+                     setTimeout(async () => {
+                         try {
+                             await bot.editMessageText(`🤖 Анализирую ваши предпочтения...`, {
+                                 chat_id, message_id: msg.message_id
+                             });
+                         } catch (e) { /* игнорируем ошибки обновления */ }
+                     }, 2000);
+                     
+                     setTimeout(async () => {
+                         try {
+                             await bot.editMessageText(`🤖 Формирую персональный план тренировок...`, {
+                                 chat_id, message_id: msg.message_id
+                             });
+                         } catch (e) { /* игнорируем ошибки обновления */ }
+                     }, 8000);
+                     
+                     setTimeout(async () => {
+                         try {
+                             await bot.editMessageText(`🤖 Добавляю последние штрихи... Почти готово!`, {
+                                 chat_id, message_id: msg.message_id
+                             });
+                         } catch (e) { /* игнорируем ошибки обновления */ }
+                     }, 15000);
+
                      // Генерируем план с OpenAI
                      const planResult = await generateWorkoutPlan(state.profileData, state.data);
 
@@ -4275,7 +4456,10 @@ const setupBot = (app) => {
                 state.step = 'generate_plan';
 
                 // Генерируем план питания
-                const loadingMessage = await bot.editMessageText('🤖 Создаю персональный план питания... Это может занять до 30 секунд.', {
+                await bot.sendChatAction(chat_id, 'typing');
+                showTyping(chat_id, 25000);
+                
+                const loadingMessage = await bot.editMessageText('🤖 Подготавливаю ваш план питания...', {
                     chat_id, message_id: msg.message_id,
                     reply_markup: null
                 });
@@ -4323,6 +4507,31 @@ const setupBot = (app) => {
                     }
 
                     if (saveError) throw saveError;
+
+                    // Постепенное обновление прогресса
+                    setTimeout(async () => {
+                        try {
+                            await bot.editMessageText(`🤖 Рассчитываю калории и нутриенты...`, {
+                                chat_id, message_id: loadingMessage.message_id
+                            });
+                        } catch (e) { /* игнорируем ошибки обновления */ }
+                    }, 3000);
+                    
+                    setTimeout(async () => {
+                        try {
+                            await bot.editMessageText(`🤖 Подбираю блюда под ваши предпочтения...`, {
+                                chat_id, message_id: loadingMessage.message_id
+                            });
+                        } catch (e) { /* игнорируем ошибки обновления */ }
+                    }, 8000);
+                    
+                    setTimeout(async () => {
+                        try {
+                            await bot.editMessageText(`🤖 Составляю недельное меню... Почти готово!`, {
+                                chat_id, message_id: loadingMessage.message_id
+                            });
+                        } catch (e) { /* игнорируем ошибки обновления */ }
+                    }, 15000);
 
                     // Генерируем план с OpenAI
                     const planResult = await generateNutritionPlan(state.profileData, state.data);
