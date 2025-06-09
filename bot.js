@@ -23,6 +23,7 @@ const mealConfirmationCache = {};
 const workoutPlanState = {};
 const nutritionPlanState = {};
 const waterInputState = {};
+const profileEditState = {};
 
 // Состояние для ожидания вопросов от пользователя
 const questionState = {};
@@ -1682,6 +1683,80 @@ const createProgressBar = (consumed, norm) => {
     return `[${'■'.repeat(filledBlocks)}${'□'.repeat(emptyBlocks)}] ${percentage.toFixed(0)}%`;
 };
 
+// --- Profile Menu Function ---
+const showProfileMenu = async (chat_id, telegram_id) => {
+    try {
+        // Получаем полную информацию о профиле
+        const { data: profile, error } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('telegram_id', telegram_id)
+            .single();
+
+        if (error || !profile) {
+            bot.sendMessage(chat_id, 'Профиль не найден. Нажмите /start для регистрации.');
+            return;
+        }
+
+        // Формируем текст профиля
+        let profileText = `👤 **Ваш профиль**\n\n`;
+        profileText += `👋 **Имя:** ${profile.first_name}\n`;
+        profileText += `👤 **Пол:** ${profile.gender === 'male' ? '👨 Мужской' : '👩 Женский'}\n`;
+        profileText += `🎂 **Возраст:** ${profile.age} лет\n`;
+        profileText += `📏 **Рост:** ${profile.height_cm} см\n`;
+        profileText += `⚖️ **Текущий вес:** ${profile.weight_kg} кг\n`;
+        
+        if (profile.target_weight_kg) {
+            profileText += `🎯 **Целевой вес:** ${profile.target_weight_kg} кг\n`;
+        }
+        
+        if (profile.timeframe_months) {
+            profileText += `⏱️ **Срок достижения:** ${profile.timeframe_months} месяцев\n`;
+        }
+        
+        profileText += `🎯 **Цель:** ${profile.goal}\n\n`;
+        
+        profileText += `📊 **Дневные нормы:**\n`;
+        profileText += `🔥 Калории: ${profile.daily_calories} ккал\n`;
+        profileText += `🥩 Белки: ${profile.daily_protein} г\n`;
+        profileText += `🥑 Жиры: ${profile.daily_fat} г\n`;
+        profileText += `🍞 Углеводы: ${profile.daily_carbs} г\n`;
+        profileText += `💧 Вода: ${calculateWaterNorm(profile.weight_kg)} мл\n\n`;
+        
+        profileText += `Что хотите изменить?`;
+
+        bot.sendMessage(chat_id, profileText, {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [
+                        { text: '👋 Имя', callback_data: 'profile_edit_name' },
+                        { text: '🎂 Возраст', callback_data: 'profile_edit_age' }
+                    ],
+                    [
+                        { text: '📏 Рост', callback_data: 'profile_edit_height' },
+                        { text: '⚖️ Вес', callback_data: 'profile_edit_weight' }
+                    ],
+                    [
+                        { text: '🎯 Целевой вес', callback_data: 'profile_edit_target_weight' },
+                        { text: '⏱️ Срок', callback_data: 'profile_edit_timeframe' }
+                    ],
+                    [
+                        { text: '🎯 Цель', callback_data: 'profile_edit_goal' },
+                        { text: '👤 Пол', callback_data: 'profile_edit_gender' }
+                    ],
+                    [
+                        { text: '🔄 Пересчитать нормы', callback_data: 'profile_recalculate' }
+                    ]
+                ]
+            }
+        });
+    } catch (error) {
+        console.error('Error showing profile menu:', error);
+        bot.sendMessage(chat_id, 'Произошла ошибка при загрузке профиля. Попробуйте позже.');
+    }
+};
+
 // --- Daily Reports Functions ---
 const generateDailyReport = async (telegram_id) => {
     try {
@@ -1944,7 +2019,7 @@ const setupBot = (app) => {
                     [{ text: '📸 Добавить по фото' }],
                     [{ text: '✍️ Добавить вручную' }, { text: '📊 Статистика' }],
                     [{ text: '🏋️ План тренировок' }, { text: '🍽️ План питания' }],
-                    [{ text: '💧 Отслеживание воды' }]
+                    [{ text: '💧 Отслеживание воды' }, { text: '👤 Профиль' }]
                 ],
                 resize_keyboard: true,
                 one_time_keyboard: false
@@ -2171,6 +2246,10 @@ const setupBot = (app) => {
         }
         if (msg.text === '💧 Отслеживание воды') {
             showWaterMenu(chat_id, telegram_id);
+            return;
+        }
+        if (msg.text === '👤 Профиль') {
+            showProfileMenu(chat_id, telegram_id);
             return;
         }
 
@@ -2623,6 +2702,7 @@ const setupBot = (app) => {
         const manualAddStep = manualAddState[telegram_id]?.step;
         const isWaitingForQuestion = questionState[telegram_id]?.waiting;
         const isWaitingForWater = waterInputState[telegram_id]?.waiting;
+        const isEditingProfile = profileEditState[telegram_id]?.field;
 
         if (isWaitingForQuestion) {
             // Пользователь задает вопрос - обрабатываем его через AI
@@ -2692,6 +2772,119 @@ const setupBot = (app) => {
             } else {
                 bot.sendMessage(chat_id, `❌ Ошибка при сохранении: ${result.error}`);
             }
+            return;
+        }
+
+        if (isEditingProfile) {
+            // Пользователь редактирует поле профиля
+            const field = profileEditState[telegram_id].field;
+            let value = msg.text.trim();
+            let updateField = '';
+            let displayName = '';
+            
+            // Валидация и преобразование значений
+            try {
+                switch (field) {
+                    case 'name':
+                        if (value.length < 1 || value.length > 50) {
+                            bot.sendMessage(chat_id, '❌ Имя должно содержать от 1 до 50 символов. Попробуйте еще раз.');
+                            return;
+                        }
+                        updateField = 'first_name';
+                        displayName = 'Имя';
+                        break;
+                    case 'age':
+                        const age = parseInt(value);
+                        if (isNaN(age) || age < 10 || age > 100) {
+                            bot.sendMessage(chat_id, '❌ Возраст должен быть от 10 до 100 лет. Попробуйте еще раз.');
+                            return;
+                        }
+                        value = age;
+                        updateField = 'age';
+                        displayName = 'Возраст';
+                        break;
+                    case 'height':
+                        const height = parseInt(value);
+                        if (isNaN(height) || height < 100 || height > 250) {
+                            bot.sendMessage(chat_id, '❌ Рост должен быть от 100 до 250 см. Попробуйте еще раз.');
+                            return;
+                        }
+                        value = height;
+                        updateField = 'height_cm';
+                        displayName = 'Рост';
+                        break;
+                    case 'weight':
+                        const weight = parseFloat(value.replace(',', '.'));
+                        if (isNaN(weight) || weight <= 20 || weight > 300) {
+                            bot.sendMessage(chat_id, '❌ Вес должен быть от 20 до 300 кг. Попробуйте еще раз.');
+                            return;
+                        }
+                        value = weight;
+                        updateField = 'weight_kg';
+                        displayName = 'Вес';
+                        break;
+                    case 'target_weight':
+                        const targetWeight = parseFloat(value.replace(',', '.'));
+                        if (isNaN(targetWeight) || targetWeight <= 20 || targetWeight > 300) {
+                            bot.sendMessage(chat_id, '❌ Целевой вес должен быть от 20 до 300 кг. Попробуйте еще раз.');
+                            return;
+                        }
+                        value = targetWeight;
+                        updateField = 'target_weight_kg';
+                        displayName = 'Целевой вес';
+                        break;
+                    case 'timeframe':
+                        const timeframe = parseInt(value);
+                        if (isNaN(timeframe) || timeframe < 1 || timeframe > 24) {
+                            bot.sendMessage(chat_id, '❌ Срок должен быть от 1 до 24 месяцев. Попробуйте еще раз.');
+                            return;
+                        }
+                        value = timeframe;
+                        updateField = 'timeframe_months';
+                        displayName = 'Срок достижения цели';
+                        break;
+                    default:
+                        bot.sendMessage(chat_id, '❌ Неизвестное поле для редактирования.');
+                        delete profileEditState[telegram_id];
+                        return;
+                }
+                
+                // Обновляем значение в базе данных
+                const { error } = await supabase
+                    .from('profiles')
+                    .update({ [updateField]: value })
+                    .eq('telegram_id', telegram_id);
+                
+                if (error) throw error;
+                
+                // Пересчитываем нормы если изменился вес, рост или возраст
+                if (['weight_kg', 'height_cm', 'age'].includes(updateField)) {
+                    const { data: profile } = await supabase
+                        .from('profiles')
+                        .select('*')
+                        .eq('telegram_id', telegram_id)
+                        .single();
+                    
+                    if (profile) {
+                        await calculateAndSaveNorms(profile);
+                    }
+                }
+                
+                bot.sendMessage(chat_id, `✅ ${displayName} успешно изменен на: **${value}**\n\nВозвращаюсь в профиль...`, {
+                    parse_mode: 'Markdown'
+                });
+                
+                // Показываем обновленный профиль через 2 секунды
+                setTimeout(() => {
+                    showProfileMenu(chat_id, telegram_id);
+                }, 2000);
+                
+            } catch (error) {
+                console.error('Error updating profile field:', error);
+                bot.sendMessage(chat_id, '❌ Ошибка при обновлении профиля. Попробуйте позже.');
+            }
+            
+            delete profileEditState[telegram_id];
             return;
         }
 
@@ -4144,6 +4337,175 @@ const setupBot = (app) => {
 
                 // Очищаем состояние
                 delete nutritionPlanState[telegram_id];
+            }
+            return;
+        }
+
+        // --- Profile Edit Callbacks ---
+        if (data.startsWith('profile_')) {
+            await bot.answerCallbackQuery(callbackQuery.id);
+            
+            const parts = data.split('_');
+            const action = parts[1];
+            const field = parts.slice(2).join('_');
+            
+            if (action === 'edit') {
+                // Инициализируем редактирование поля
+                profileEditState[telegram_id] = { field: field };
+                
+                let fieldName = '';
+                let question = '';
+                let keyboard = null;
+                
+                switch (field) {
+                    case 'name':
+                        fieldName = 'имя';
+                        question = 'Введите ваше имя:';
+                        break;
+                    case 'age':
+                        fieldName = 'возраст';
+                        question = 'Введите ваш возраст (в годах):';
+                        break;
+                    case 'height':
+                        fieldName = 'рост';
+                        question = 'Введите ваш рост (в см):';
+                        break;
+                    case 'weight':
+                        fieldName = 'вес';
+                        question = 'Введите ваш текущий вес (в кг):';
+                        break;
+                    case 'target':
+                        fieldName = 'целевой вес';
+                        question = 'Введите ваш целевой вес (в кг):';
+                        profileEditState[telegram_id].field = 'target_weight';
+                        break;
+                    case 'timeframe':
+                        fieldName = 'срок достижения цели';
+                        question = 'Введите срок достижения цели (в месяцах):';
+                        break;
+                    case 'goal':
+                        fieldName = 'цель';
+                        question = 'Выберите вашу цель:';
+                        keyboard = {
+                            inline_keyboard: [
+                                [{ text: '📉 Похудеть', callback_data: 'profile_update_goal_lose_weight' }],
+                                [{ text: '📈 Набрать массу', callback_data: 'profile_update_goal_gain_mass' }],
+                                [{ text: '⚖️ Поддерживать вес', callback_data: 'profile_update_goal_maintain' }]
+                            ]
+                        };
+                        break;
+                    case 'gender':
+                        fieldName = 'пол';
+                        question = 'Выберите ваш пол:';
+                        keyboard = {
+                            inline_keyboard: [
+                                [{ text: '👨 Мужской', callback_data: 'profile_update_gender_male' }],
+                                [{ text: '👩 Женский', callback_data: 'profile_update_gender_female' }]
+                            ]
+                        };
+                        break;
+                }
+                
+                await bot.editMessageText(`Изменение: **${fieldName}**\n\n${question}`, {
+                    chat_id, message_id: msg.message_id,
+                    parse_mode: 'Markdown',
+                    reply_markup: keyboard
+                });
+                
+            } else if (action === 'update') {
+                // Обновляем поле в базе данных
+                const value = params.slice(1).join('_');
+                const state = profileEditState[telegram_id];
+                
+                if (!state) {
+                    await bot.editMessageText('Сессия истекла. Вернитесь в профиль и попробуйте снова.', {
+                        chat_id, message_id: msg.message_id
+                    });
+                    return;
+                }
+                
+                let updateField = '';
+                let displayValue = '';
+                
+                if (field === 'goal') {
+                    updateField = 'goal';
+                    displayValue = value === 'lose_weight' ? 'Похудеть' : 
+                                  value === 'gain_mass' ? 'Набрать массу' : 'Поддерживать вес';
+                } else if (field === 'gender') {
+                    updateField = 'gender';
+                    displayValue = value === 'male' ? 'Мужской' : 'Женский';
+                }
+                
+                try {
+                    const { error } = await supabase
+                        .from('profiles')
+                        .update({ [updateField]: value })
+                        .eq('telegram_id', telegram_id);
+                    
+                    if (error) throw error;
+                    
+                    // Пересчитываем нормы если изменился пол или цель
+                    if (field === 'goal' || field === 'gender') {
+                        const { data: profile } = await supabase
+                            .from('profiles')
+                            .select('*')
+                            .eq('telegram_id', telegram_id)
+                            .single();
+                        
+                        if (profile) {
+                            await calculateAndSaveNorms(profile);
+                        }
+                    }
+                    
+                    await bot.editMessageText(`✅ ${field === 'goal' ? 'Цель' : 'Пол'} успешно изменен на: **${displayValue}**\n\nВозвращаюсь в профиль...`, {
+                        chat_id, message_id: msg.message_id,
+                        parse_mode: 'Markdown'
+                    });
+                    
+                    // Показываем обновленный профиль через 2 секунды
+                    setTimeout(() => {
+                        showProfileMenu(chat_id, telegram_id);
+                    }, 2000);
+                    
+                } catch (error) {
+                    console.error('Error updating profile:', error);
+                    await bot.editMessageText('❌ Ошибка при обновлении профиля. Попробуйте позже.', {
+                        chat_id, message_id: msg.message_id
+                    });
+                }
+                
+                delete profileEditState[telegram_id];
+                
+            } else if (action === 'recalculate') {
+                // Пересчитываем нормы
+                try {
+                    const { data: profile } = await supabase
+                        .from('profiles')
+                        .select('*')
+                        .eq('telegram_id', telegram_id)
+                        .single();
+                    
+                    if (profile) {
+                        await calculateAndSaveNorms(profile);
+                        await bot.editMessageText('✅ Дневные нормы пересчитаны!\n\nВозвращаюсь в профиль...', {
+                            chat_id, message_id: msg.message_id
+                        });
+                        
+                        // Показываем обновленный профиль через 2 секунды
+                        setTimeout(() => {
+                            showProfileMenu(chat_id, telegram_id);
+                        }, 2000);
+                    } else {
+                        await bot.editMessageText('❌ Ошибка при получении профиля.', {
+                            chat_id, message_id: msg.message_id
+                        });
+                    }
+                } catch (error) {
+                    console.error('Error recalculating norms:', error);
+                    await bot.editMessageText('❌ Ошибка при пересчете норм.', {
+                        chat_id, message_id: msg.message_id
+                    });
+                }
             }
             return;
         }
