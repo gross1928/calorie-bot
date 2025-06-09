@@ -65,8 +65,8 @@ const streamMessage = async (chat_id, fullText, options = {}) => {
         let accumulatedText = chars[0];
         
         for (let i = 1; i < chars.length; i++) {
-            // УЛЬТРА-БЫСТРЫЙ вывод как в "Матрице": 1-2.4мс между символами - МОЛНИЕНОСНАЯ скорость!
-            await new Promise(resolve => setTimeout(resolve, 1 + Math.random() * 1.4));
+            // МГНОВЕННЫЙ вывод как в "Матрице": 0.05-0.12мс между символами - ТЕЛЕПОРТАЦИЯ ТЕКСТА!
+            await new Promise(resolve => setTimeout(resolve, 0.05 + Math.random() * 0.07));
             accumulatedText += chars[i];
             
             const isLast = i === chars.length - 1;
