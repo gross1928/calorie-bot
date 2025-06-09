@@ -595,25 +595,35 @@ const logWorkout = async (telegram_id, workoutData) => {
     try {
         console.log('Logging workout:', workoutData);
 
+        // Преобразуем массив упражнений в строку если это массив
+        const exercisesString = Array.isArray(workoutData.exercises) 
+            ? workoutData.exercises.join(', ') 
+            : workoutData.exercises || '';
+
         const { data, error } = await supabase
             .from('workout_logs')
             .insert({
                 telegram_id,
                 workout_type: workoutData.workout_type,
                 duration_minutes: workoutData.duration,
-                exercises: workoutData.exercises,
+                exercises: exercisesString,
                 intensity: workoutData.intensity,
                 calories_burned: workoutData.calories_burned || null,
                 notes: workoutData.notes || null,
                 date: new Date().toISOString().split('T')[0]
             });
 
-        if (error) throw error;
+        if (error) {
+            console.error('Supabase error details:', error);
+            console.error('Full error object:', JSON.stringify(error, null, 2));
+            throw error;
+        }
 
         return { success: true, data };
     } catch (error) {
         console.error('Error logging workout:', error);
-        return { success: false, error: error.message };
+        console.error('Full error:', JSON.stringify(error, null, 2));
+        return { success: false, error: error.message || JSON.stringify(error) };
     }
 };
 
@@ -2338,7 +2348,7 @@ const setupBot = (app) => {
                                     notes: transcriptionResult.text
                                 };
 
-                                const result = await addWorkoutRecord(telegram_id, workoutRecord);
+                                const result = await logWorkout(telegram_id, workoutRecord);
                                 
                                 if (result.success) {
                                     // Получаем прогресс по плану
