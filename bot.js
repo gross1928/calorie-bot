@@ -785,19 +785,19 @@ const addWorkoutRecord = async (telegram_id, workoutData) => {
             ? workoutData.exercises.join(', ') 
             : workoutData.exercises || '';
         
+        // Попробуем записать только основные поля сначала
+        const basicData = {
+            telegram_id: String(telegram_id),
+            workout_type: workoutData.workout_type || 'general',
+            duration_minutes: parseInt(workoutData.duration) || 30,
+            date: new Date().toISOString().split('T')[0]
+        };
+        
+        console.log('Trying to insert basic workout data:', basicData);
+
         const { data, error } = await supabase
-            .from('workout_records')
-            .insert({
-                telegram_id,
-                workout_type: workoutData.workout_type,
-                exercises: exercisesString,
-                duration_minutes: workoutData.duration,
-                intensity: workoutData.intensity,
-                calories_burned: workoutData.calories_burned,
-                notes: workoutData.notes || '',
-                date: new Date().toISOString().split('T')[0],
-                created_at: new Date().toISOString()
-            });
+            .from('workout_logs')
+            .insert(basicData);
 
         if (error) {
             console.error('Supabase error details:', error);
@@ -2374,7 +2374,7 @@ const setupBot = (app) => {
                                     notes: transcriptionResult.text
                                 };
 
-                                const result = await logWorkout(telegram_id, workoutRecord);
+                                const result = await addWorkoutRecord(telegram_id, workoutRecord);
                                 
                                 if (result.success) {
                                     // Получаем прогресс по плану
