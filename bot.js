@@ -1698,25 +1698,33 @@ const showProfileMenu = async (chat_id, telegram_id) => {
             return;
         }
 
-        // Формируем текст профиля
-        let profileText = `👤 **Ваш профиль**\n\n`;
-        profileText += `👋 **Имя:** ${profile.first_name}\n`;
-        profileText += `👤 **Пол:** ${profile.gender === 'male' ? '👨 Мужской' : '👩 Женский'}\n`;
-        profileText += `🎂 **Возраст:** ${profile.age} лет\n`;
-        profileText += `📏 **Рост:** ${profile.height_cm} см\n`;
-        profileText += `⚖️ **Текущий вес:** ${profile.weight_kg} кг\n`;
+        // Преобразуем цель в человекочитаемый вид
+        const goalText = profile.goal === 'lose_weight' ? 'Похудение' :
+                        profile.goal === 'gain_mass' ? 'Набор массы' :
+                        profile.goal === 'maintain' ? 'Поддержание веса' : profile.goal;
+
+        // Экранируем специальные символы для Markdown
+        const escapeName = (name) => name.replace(/[_*[\]()~`>#+=|{}.!-]/g, '\\$&');
+
+        // Формируем текст профиля без markdown для безопасности
+        let profileText = `👤 Ваш профиль\n\n`;
+        profileText += `👋 Имя: ${escapeName(profile.first_name)}\n`;
+        profileText += `👤 Пол: ${profile.gender === 'male' ? '👨 Мужской' : '👩 Женский'}\n`;
+        profileText += `🎂 Возраст: ${profile.age} лет\n`;
+        profileText += `📏 Рост: ${profile.height_cm} см\n`;
+        profileText += `⚖️ Текущий вес: ${profile.weight_kg} кг\n`;
         
         if (profile.target_weight_kg) {
-            profileText += `🎯 **Целевой вес:** ${profile.target_weight_kg} кг\n`;
+            profileText += `🎯 Целевой вес: ${profile.target_weight_kg} кг\n`;
         }
         
         if (profile.timeframe_months) {
-            profileText += `⏱️ **Срок достижения:** ${profile.timeframe_months} месяцев\n`;
+            profileText += `⏱️ Срок достижения: ${profile.timeframe_months} месяцев\n`;
         }
         
-        profileText += `🎯 **Цель:** ${profile.goal}\n\n`;
+        profileText += `🎯 Цель: ${goalText}\n\n`;
         
-        profileText += `📊 **Дневные нормы:**\n`;
+        profileText += `📊 Дневные нормы:\n`;
         profileText += `🔥 Калории: ${profile.daily_calories} ккал\n`;
         profileText += `🥩 Белки: ${profile.daily_protein} г\n`;
         profileText += `🥑 Жиры: ${profile.daily_fat} г\n`;
@@ -1726,7 +1734,6 @@ const showProfileMenu = async (chat_id, telegram_id) => {
         profileText += `Что хотите изменить?`;
 
         bot.sendMessage(chat_id, profileText, {
-            parse_mode: 'Markdown',
             reply_markup: {
                 inline_keyboard: [
                     [
@@ -2870,9 +2877,7 @@ const setupBot = (app) => {
                     }
                 }
                 
-                bot.sendMessage(chat_id, `✅ ${displayName} успешно изменен на: **${value}**\n\nВозвращаюсь в профиль...`, {
-                    parse_mode: 'Markdown'
-                });
+                bot.sendMessage(chat_id, `✅ ${displayName} успешно изменен на: ${value}\n\nВозвращаюсь в профиль...`);
                 
                 // Показываем обновленный профиль через 2 секунды
                 setTimeout(() => {
@@ -4406,9 +4411,8 @@ const setupBot = (app) => {
                         break;
                 }
                 
-                await bot.editMessageText(`Изменение: **${fieldName}**\n\n${question}`, {
+                await bot.editMessageText(`Изменение: ${fieldName}\n\n${question}`, {
                     chat_id, message_id: msg.message_id,
-                    parse_mode: 'Markdown',
                     reply_markup: keyboard
                 });
                 
@@ -4457,9 +4461,8 @@ const setupBot = (app) => {
                         }
                     }
                     
-                    await bot.editMessageText(`✅ ${field === 'goal' ? 'Цель' : 'Пол'} успешно изменен на: **${displayValue}**\n\nВозвращаюсь в профиль...`, {
-                        chat_id, message_id: msg.message_id,
-                        parse_mode: 'Markdown'
+                    await bot.editMessageText(`✅ ${field === 'goal' ? 'Цель' : 'Пол'} успешно изменен на: ${displayValue}\n\nВозвращаюсь в профиль...`, {
+                        chat_id, message_id: msg.message_id
                     });
                     
                     // Показываем обновленный профиль через 2 секунды
