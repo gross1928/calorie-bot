@@ -429,11 +429,12 @@ const processVoiceMessage = async (fileUrl) => {
         const arrayBuffer = await response.arrayBuffer();
         const buffer = Buffer.from(arrayBuffer);
         
-        // Создаем File объект для OpenAI
-        const audioFile = new File([buffer], 'voice.oga', { type: 'audio/ogg' });
+        // Добавляем метаданные к буферу для OpenAI API
+        buffer.name = 'voice.oga';
+        buffer.type = 'audio/ogg';
         
         const transcription = await openai.audio.transcriptions.create({
-            file: audioFile,
+            file: buffer,
             model: 'whisper-1',
             language: 'ru',
         });
