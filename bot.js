@@ -421,6 +421,11 @@ ${profileInfo}
 
 // --- Voice Message Processing ---
 const processVoiceMessage = async (fileUrl) => {
+    const fs = require('fs');
+    const path = require('path');
+    
+    let tempFilePath = null;
+    
     try {
         console.log('Processing voice message with Whisper...');
         
@@ -429,12 +434,15 @@ const processVoiceMessage = async (fileUrl) => {
         const arrayBuffer = await response.arrayBuffer();
         const buffer = Buffer.from(arrayBuffer);
         
-        // Добавляем метаданные к буферу для OpenAI API
-        buffer.name = 'voice.oga';
-        buffer.type = 'audio/ogg';
+        // Создаем временный файл
+        tempFilePath = path.join('/tmp', `voice_${Date.now()}.oga`);
+        fs.writeFileSync(tempFilePath, buffer);
+        
+        // Создаем поток для чтения файла
+        const audioStream = fs.createReadStream(tempFilePath);
         
         const transcription = await openai.audio.transcriptions.create({
-            file: buffer,
+            file: audioStream,
             model: 'whisper-1',
             language: 'ru',
         });
@@ -443,6 +451,15 @@ const processVoiceMessage = async (fileUrl) => {
     } catch (error) {
         console.error('Error transcribing voice message:', error);
         return { success: false, error: 'Не удалось распознать голосовое сообщение' };
+    } finally {
+        // Удаляем временный файл
+        if (tempFilePath && fs.existsSync(tempFilePath)) {
+            try {
+                fs.unlinkSync(tempFilePath);
+            } catch (cleanupError) {
+                console.error('Error cleaning up temp file:', cleanupError);
+            }
+        }
     }
 };
 
