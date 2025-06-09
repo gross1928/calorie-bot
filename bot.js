@@ -1714,6 +1714,7 @@ const showProfileMenu = async (chat_id, telegram_id) => {
         profileText += `📏 Рост: ${profile.height_cm} см\n`;
         profileText += `⚖️ Текущий вес: ${profile.weight_kg} кг\n`;
         
+        // Проверяем наличие дополнительных полей
         if (profile.target_weight_kg) {
             profileText += `🎯 Целевой вес: ${profile.target_weight_kg} кг\n`;
         }
