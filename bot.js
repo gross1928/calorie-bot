@@ -19,6 +19,8 @@ const openai = new OpenAI({ apiKey: openaiApiKey });
 const registrationState = {};
 const manualAddState = {};
 const mealConfirmationCache = {};
+const workoutPlanState = {};
+const nutritionPlanState = {};
 
 // --- Helper Functions ---
 const getDateRange = (period) => {
@@ -198,6 +200,150 @@ const recognizeFoodFromPhoto = async (photoUrl) => {
     }
 };
 
+const generateWorkoutPlan = async (profileData, additionalData) => {
+    try {
+        const { first_name, gender, age, height_cm, weight_kg, goal } = profileData;
+        const { experience } = additionalData;
+
+        console.log('Generating workout plan with OpenAI...');
+        
+        const systemPrompt = `Ты - профессиональный фитнес-тренер с многолетним опытом. Твоя задача - создать персональный план тренировок на неделю.
+
+ПРОФИЛЬ КЛИЕНТА:
+- Имя: ${first_name}
+- Пол: ${gender === 'male' ? 'мужской' : 'женский'}
+- Возраст: ${age} лет
+- Рост: ${height_cm} см
+- Вес: ${weight_kg} кг
+- Цель: ${goal === 'lose_weight' ? 'похудение' : goal === 'gain_mass' ? 'набор массы' : 'поддержание веса'}
+- Опыт тренировок: ${experience}
+
+ТРЕБОВАНИЯ К ПЛАНУ:
+1. План на 7 дней с указанием дней отдыха
+2. Упражнения должны быть безопасными и подходящими для уровня опыта
+3. Укажи количество подходов, повторений и время отдыха
+4. Включи разминку и заминку
+5. Ответ дай СТРОГО в формате Markdown с таблицами
+
+ФОРМАТ ОТВЕТА:
+# 🏋️ Персональный план тренировок для ${first_name}
+
+## 📊 Общая информация
+- **Цель:** [цель тренировок]
+- **Уровень:** [уровень опыта]
+- **Частота:** [количество тренировок в неделю]
+
+## 📅 Недельный план
+
+### День 1 - [Название тренировки]
+| Упражнение | Подходы | Повторения | Отдых |
+|------------|---------|------------|-------|
+| [упражнение] | [подходы] | [повторения] | [время отдыха] |
+
+### День 2 - [Название тренировки или Отдых]
+[аналогично]
+
+[...продолжи для всех 7 дней]
+
+## 💡 Рекомендации
+- [важные советы по выполнению]
+- [рекомендации по питанию во время тренировок]
+- [советы по восстановлению]`;
+
+        const response = await openai.chat.completions.create({
+            model: 'gpt-4o',
+            messages: [
+                { role: 'system', content: systemPrompt },
+                { role: 'user', content: `Создай персональный план тренировок учитывая все мои данные.` }
+            ],
+            max_tokens: 2000,
+        });
+
+        const plan = response.choices[0].message.content;
+        return { success: true, plan };
+
+    } catch (error) {
+        console.error('Error generating workout plan:', error);
+        return { success: false, error: error.message };
+    }
+};
+
+const generateNutritionPlan = async (profileData, additionalData) => {
+    try {
+        const { first_name, gender, age, height_cm, weight_kg, goal, daily_calories, daily_protein, daily_fat, daily_carbs } = profileData;
+        const { preferences, allergies } = additionalData;
+
+        console.log('Generating nutrition plan with OpenAI...');
+        
+        const systemPrompt = `Ты - квалифицированный диетолог с многолетним опытом. Твоя задача - создать персональный план питания на неделю.
+
+ПРОФИЛЬ КЛИЕНТА:
+- Имя: ${first_name}
+- Пол: ${gender === 'male' ? 'мужской' : 'женский'}
+- Возраст: ${age} лет
+- Рост: ${height_cm} см
+- Вес: ${weight_kg} кг
+- Цель: ${goal === 'lose_weight' ? 'похудение' : goal === 'gain_mass' ? 'набор массы' : 'поддержание веса'}
+- Дневная норма калорий: ${daily_calories} ккал
+- Белки: ${daily_protein} г
+- Жиры: ${daily_fat} г
+- Углеводы: ${daily_carbs} г
+- Пищевые предпочтения: ${preferences}
+- Аллергии: ${allergies || 'нет'}
+
+ТРЕБОВАНИЯ К ПЛАНУ:
+1. План на 7 дней с 5 приемами пищи (завтрак, перекус, обед, перекус, ужин)
+2. Соблюдение КБЖУ в рамках нормы (+/- 5%)
+3. Учет пищевых предпочтений и аллергий
+4. Разнообразие блюд
+5. Ответ дай СТРОГО в формате Markdown с таблицами
+
+ФОРМАТ ОТВЕТА:
+# 🍽️ Персональный план питания для ${first_name}
+
+## 📊 Дневные нормы
+- **Калории:** ${daily_calories} ккал
+- **Белки:** ${daily_protein} г
+- **Жиры:** ${daily_fat} г  
+- **Углеводы:** ${daily_carbs} г
+
+## 📅 Недельное меню
+
+### День 1
+| Прием пищи | Блюдо | Калории | Белки | Жиры | Углеводы |
+|------------|-------|---------|-------|------|----------|
+| Завтрак | [блюдо с весом] | [ккал] | [г] | [г] | [г] |
+| Перекус | [блюдо с весом] | [ккал] | [г] | [г] | [г] |
+| Обед | [блюдо с весом] | [ккал] | [г] | [г] | [г] |
+| Перекус | [блюдо с весом] | [ккал] | [г] | [г] | [г] |
+| Ужин | [блюдо с весом] | [ккал] | [г] | [г] | [г] |
+| **ИТОГО** | | [общие ккал] | [общие г] | [общие г] | [общие г] |
+
+[...продолжи для всех 7 дней]
+
+## 💡 Рекомендации
+- [советы по приготовлению]
+- [рекомендации по времени приема пищи]
+- [альтернативы блюдам]`;
+
+        const response = await openai.chat.completions.create({
+            model: 'gpt-4o',
+            messages: [
+                { role: 'system', content: systemPrompt },
+                { role: 'user', content: `Создай персональный план питания учитывая все мои данные и предпочтения.` }
+            ],
+            max_tokens: 2500,
+        });
+
+        const plan = response.choices[0].message.content;
+        return { success: true, plan };
+
+    } catch (error) {
+        console.error('Error generating nutrition plan:', error);
+        return { success: false, error: error.message };
+    }
+};
+
 const setupBot = (app) => {
     const url = process.env.SERVER_URL;
     
@@ -239,7 +385,8 @@ const setupBot = (app) => {
             reply_markup: {
                 keyboard: [
                     [{ text: '📸 Добавить по фото' }],
-                    [{ text: '✍️ Добавить вручную' }, { text: '📊 Статистика' }]
+                    [{ text: '✍️ Добавить вручную' }, { text: '📊 Статистика' }],
+                    [{ text: '🏋️ План тренировок' }, { text: '🍽️ План питания' }]
                 ],
                 resize_keyboard: true,
                 one_time_keyboard: false
@@ -370,6 +517,77 @@ const setupBot = (app) => {
                     ]
                 }
             });
+            return;
+        }
+        if (msg.text === '🏋️ План тренировок') {
+            // Проверяем, есть ли профиль пользователя
+            try {
+                const { data: profile, error } = await supabase
+                    .from('profiles')
+                    .select('id, first_name, gender, age, height_cm, weight_kg, goal')
+                    .eq('telegram_id', telegram_id)
+                    .single();
+
+                if (error || !profile) {
+                    bot.sendMessage(chat_id, 'Сначала нужно пройти регистрацию. Нажмите /start');
+                    return;
+                }
+
+                // Инициализируем состояние для сбора данных о тренировках
+                workoutPlanState[telegram_id] = { 
+                    step: 'ask_experience', 
+                    profileData: profile 
+                };
+
+                bot.sendMessage(chat_id, 'Отлично! Давайте создадим персональный план тренировок 💪\n\nДля начала, какой у вас опыт тренировок?', {
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: 'Новичок (меньше 6 месяцев)', callback_data: 'workout_exp_beginner' }],
+                            [{ text: 'Средний (6 месяцев - 2 года)', callback_data: 'workout_exp_intermediate' }],
+                            [{ text: 'Продвинутый (больше 2 лет)', callback_data: 'workout_exp_advanced' }]
+                        ]
+                    }
+                });
+            } catch (dbError) {
+                console.error('Error fetching profile for workout plan:', dbError);
+                bot.sendMessage(chat_id, 'Ошибка при получении профиля. Попробуйте позже.');
+            }
+            return;
+        }
+        if (msg.text === '🍽️ План питания') {
+            // Проверяем, есть ли профиль пользователя
+            try {
+                const { data: profile, error } = await supabase
+                    .from('profiles')
+                    .select('id, first_name, gender, age, height_cm, weight_kg, goal, daily_calories, daily_protein, daily_fat, daily_carbs')
+                    .eq('telegram_id', telegram_id)
+                    .single();
+
+                if (error || !profile) {
+                    bot.sendMessage(chat_id, 'Сначала нужно пройти регистрацию. Нажмите /start');
+                    return;
+                }
+
+                // Инициализируем состояние для сбора данных о питании
+                nutritionPlanState[telegram_id] = { 
+                    step: 'ask_preferences', 
+                    profileData: profile 
+                };
+
+                bot.sendMessage(chat_id, 'Отлично! Создадим персональный план питания 🍽️\n\nКакие у вас есть пищевые предпочтения?', {
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: 'Обычное питание', callback_data: 'nutrition_pref_regular' }],
+                            [{ text: 'Вегетарианство', callback_data: 'nutrition_pref_vegetarian' }],
+                            [{ text: 'Веганство', callback_data: 'nutrition_pref_vegan' }],
+                            [{ text: 'Кето-диета', callback_data: 'nutrition_pref_keto' }]
+                        ]
+                    }
+                });
+            } catch (dbError) {
+                console.error('Error fetching profile for nutrition plan:', dbError);
+                bot.sendMessage(chat_id, 'Ошибка при получении профиля. Попробуйте позже.');
+            }
             return;
         }
 
@@ -762,6 +980,73 @@ const setupBot = (app) => {
                 console.error('Error fetching stats:', dbError.message);
                 await bot.editMessageText('Произошла ошибка при получении статистики. Попробуйте позже.', {
                     chat_id, message_id: msg.message_id
+                });
+            }
+            return;
+        }
+
+        // --- Workout Plan Callbacks ---
+        if (action === 'workout') {
+            const subAction = params[0];
+            const value = params[1];
+            await bot.answerCallbackQuery(callbackQuery.id);
+
+            const state = workoutPlanState[telegram_id];
+            if (!state) {
+                await bot.editMessageText('Сессия истекла. Пожалуйста, начните заново.', {
+                    chat_id, message_id: msg.message_id
+                });
+                return;
+            }
+
+            if (state.step === 'ask_experience' && subAction === 'exp') {
+                state.data = { ...state.data, experience: value };
+                state.step = 'ask_goals';
+
+                await bot.editMessageText('Какая ваша основная цель тренировок?', {
+                    chat_id, message_id: msg.message_id,
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: 'Похудение и жиросжигание', callback_data: 'workout_goal_weightloss' }],
+                            [{ text: 'Набор мышечной массы', callback_data: 'workout_goal_muscle' }],
+                            [{ text: 'Поддержание формы', callback_data: 'workout_goal_maintain' }],
+                            [{ text: 'Общее здоровье и фитнес', callback_data: 'workout_goal_health' }]
+                        ]
+                    }
+                });
+            }
+            return;
+        }
+
+        // --- Nutrition Plan Callbacks ---
+        if (action === 'nutrition') {
+            const subAction = params[0];
+            const value = params[1];
+            await bot.answerCallbackQuery(callbackQuery.id);
+
+            const state = nutritionPlanState[telegram_id];
+            if (!state) {
+                await bot.editMessageText('Сессия истекла. Пожалуйста, начните заново.', {
+                    chat_id, message_id: msg.message_id
+                });
+                return;
+            }
+
+            if (state.step === 'ask_preferences' && subAction === 'pref') {
+                state.data = { ...state.data, preferences: value };
+                state.step = 'ask_allergies';
+
+                await bot.editMessageText('Есть ли у вас пищевые аллергии или непереносимости?', {
+                    chat_id, message_id: msg.message_id,
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: 'Нет аллергий', callback_data: 'nutrition_allergy_none' }],
+                            [{ text: 'Лактоза', callback_data: 'nutrition_allergy_lactose' }],
+                            [{ text: 'Глютен', callback_data: 'nutrition_allergy_gluten' }],
+                            [{ text: 'Орехи', callback_data: 'nutrition_allergy_nuts' }],
+                            [{ text: 'Другое (напишу сам)', callback_data: 'nutrition_allergy_custom' }]
+                        ]
+                    }
                 });
             }
             return;
