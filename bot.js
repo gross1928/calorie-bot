@@ -27,6 +27,9 @@ const waterInputState = {};
 // Состояние для ожидания вопросов от пользователя
 const questionState = {};
 
+// Состояние для анализа медицинских данных
+const medicalAnalysisState = {};
+
 // --- Helper Functions ---
 const getDateRange = (period) => {
     const now = new Date();
@@ -416,6 +419,1052 @@ ${profileInfo}
     }
 };
 
+// --- Voice Message Processing ---
+const processVoiceMessage = async (fileUrl) => {
+    try {
+        console.log('Processing voice message with Whisper...');
+        
+        // Скачиваем файл
+        const response = await fetch(fileUrl);
+        const arrayBuffer = await response.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+        
+        // Создаем файл для OpenAI
+        const file = new File([buffer], 'voice.oga', { type: 'audio/ogg' });
+        
+        const transcription = await openai.audio.transcriptions.create({
+            file: file,
+            model: 'whisper-1',
+            language: 'ru',
+        });
+
+        return { success: true, text: transcription.text };
+    } catch (error) {
+        console.error('Error transcribing voice message:', error);
+        return { success: false, error: 'Не удалось распознать голосовое сообщение' };
+    }
+};
+
+// --- Universal AI Agent ---
+const processUniversalMessage = async (messageText, profileData = null) => {
+    try {
+        console.log('Processing message with Universal AI Agent...');
+        
+        let systemPrompt = `Ты — универсальный ИИ-помощник в боте для подсчета калорий и здорового образа жизни.
+
+Проанализируй сообщение пользователя и определи его тип. Верни ТОЛЬКО JSON-объект:
+
+{
+  "message_type": "тип сообщения",
+  "content_analysis": "краткий анализ содержания",
+  "action_required": "какое действие нужно выполнить",
+  "extracted_data": {},
+  "response_text": "ответ пользователю"
+}
+
+ТИПЫ СООБЩЕНИЙ:
+1. "food" - описание еды/приема пищи
+   - extracted_data: {"dish_name": "название", "estimated_weight": число, "meal_description": "полное описание"}
+   - action_required: "analyze_food"
+
+2. "water" - сообщение о питье воды
+   - extracted_data: {"amount_ml": число, "description": "описание"}
+   - action_required: "add_water"
+
+3. "workout" - рассказ о тренировке
+   - extracted_data: {"workout_type": "тип", "duration": "время", "exercises": ["упражнения"], "intensity": "интенсивность"}
+   - action_required: "log_workout"
+
+4. "report_request" - запрос отчета
+   - extracted_data: {"report_type": "daily|weekly|monthly"}
+   - action_required: "generate_report"
+
+5. "medical" - медицинские данные/анализы
+   - extracted_data: {"detected_parameters": ["показатели"], "values": ["значения"]}
+   - action_required: "analyze_medical"
+
+6. "question" - вопрос о питании/тренировках/здоровье
+   - extracted_data: {"topic": "тема вопроса", "question_type": "тип"}
+   - action_required: "answer_question"
+
+7. "mood_sharing" - рассказ о самочувствии/настроении/впечатлениях
+   - extracted_data: {"mood": "настроение", "energy_level": "уровень энергии", "context": "контекст"}
+   - action_required: "supportive_response"
+
+8. "general" - общение, приветствие, благодарность
+   - extracted_data: {}
+   - action_required: "friendly_response"
+
+ВАЖНО: response_text должен быть дружелюбным, мотивирующим и полезным!`;
+
+        if (profileData) {
+            systemPrompt += `\n\nИнформация о пользователе:
+- Имя: ${profileData.first_name}
+- Пол: ${profileData.gender}
+- Возраст: ${profileData.age} лет
+- Рост: ${profileData.height_cm} см
+- Вес: ${profileData.weight_kg} кг
+- Цель: ${profileData.goal}`;
+        }
+
+        const response = await openai.chat.completions.create({
+            model: 'gpt-4o',
+            messages: [
+                { role: 'system', content: systemPrompt },
+                { role: 'user', content: `Проанализируй это сообщение: "${messageText}"` }
+            ],
+            max_tokens: 600,
+        });
+
+        const content = response.choices[0].message.content;
+        const jsonString = content.replace(/```json/g, '').replace(/```/g, '').trim();
+        const parsedContent = JSON.parse(jsonString);
+
+        return { success: true, data: parsedContent };
+
+    } catch (error) {
+        console.error('Error processing universal message:', error);
+        return { success: false, reason: 'Ошибка при обработке сообщения' };
+    }
+};
+
+// --- Medical Data Analysis ---
+const analyzeMedicalData = async (medicalText, profileData = null) => {
+    try {
+        console.log('Analyzing medical data with AI...');
+        
+        let systemPrompt = `Ты — врач-диетолог и нутрициолог. Проанализируй медицинские данные и дай рекомендации по питанию.
+
+Верни JSON-объект:
+{
+  "detected_parameters": ["список обнаруженных показателей"],
+  "analysis_summary": "краткий анализ состояния здоровья",
+  "nutrition_recommendations": {
+    "foods_to_include": ["продукты которые стоит добавить"],
+    "foods_to_avoid": ["продукты которые стоит ограничить"],
+    "supplements": ["рекомендуемые добавки"]
+  },
+  "health_alerts": ["важные предупреждения если есть"]
+}`;
+
+        if (profileData) {
+            systemPrompt += `\n\nИнформация о пользователе: ${profileData.gender}, ${profileData.age} лет, ${profileData.height_cm} см, ${profileData.weight_kg} кг`;
+        }
+
+        const response = await openai.chat.completions.create({
+            model: 'gpt-4o',
+            messages: [
+                { role: 'system', content: systemPrompt },
+                { role: 'user', content: medicalText }
+            ],
+            max_tokens: 600,
+        });
+
+        const content = response.choices[0].message.content;
+        const jsonString = content.replace(/```json/g, '').replace(/```/g, '').trim();
+        const parsedContent = JSON.parse(jsonString);
+
+        return { success: true, data: parsedContent };
+
+    } catch (error) {
+        console.error('Error analyzing medical data:', error);
+        return { success: false, reason: 'Ошибка при анализе медицинских данных' };
+    }
+};
+
+// --- Workout Tracking Functions ---
+const logWorkout = async (telegram_id, workoutData) => {
+    try {
+        console.log('Logging workout:', workoutData);
+
+        const { data, error } = await supabase
+            .from('workout_logs')
+            .insert({
+                telegram_id,
+                workout_type: workoutData.workout_type,
+                duration_minutes: workoutData.duration,
+                exercises: workoutData.exercises,
+                intensity: workoutData.intensity,
+                calories_burned: workoutData.calories_burned || null,
+                notes: workoutData.notes || null,
+                date: new Date().toISOString().split('T')[0]
+            });
+
+        if (error) throw error;
+
+        return { success: true, data };
+    } catch (error) {
+        console.error('Error logging workout:', error);
+        return { success: false, error: error.message };
+    }
+};
+
+const getWorkoutStats = async (telegram_id, period) => {
+    try {
+        const today = new Date();
+        let startDate;
+
+        switch (period) {
+            case 'today':
+                startDate = new Date(today.setHours(0, 0, 0, 0));
+                break;
+            case 'week':
+                startDate = new Date(today.setDate(today.getDate() - 6));
+                break;
+            case 'month':
+                startDate = new Date(today.setDate(today.getDate() - 29));
+                break;
+            default:
+                startDate = new Date(today.setHours(0, 0, 0, 0));
+        }
+
+        const { data: workoutRecords, error } = await supabase
+            .from('workout_logs')
+            .select('*')
+            .eq('telegram_id', telegram_id)
+            .gte('date', startDate.toISOString().split('T')[0])
+            .order('date', { ascending: false });
+
+        if (error) throw error;
+
+        const stats = {
+            totalWorkouts: workoutRecords ? workoutRecords.length : 0,
+            totalDuration: 0,
+            totalCalories: 0,
+            workoutTypes: {},
+            recentWorkouts: workoutRecords ? workoutRecords.slice(0, 5) : []
+        };
+
+        if (workoutRecords && workoutRecords.length > 0) {
+            workoutRecords.forEach(workout => {
+                stats.totalDuration += workout.duration_minutes || 0;
+                stats.totalCalories += workout.calories_burned || 0;
+                
+                const type = workout.workout_type || 'Неизвестно';
+                stats.workoutTypes[type] = (stats.workoutTypes[type] || 0) + 1;
+            });
+        }
+
+        return { success: true, ...stats };
+    } catch (error) {
+        console.error('Error getting workout stats:', error);
+        return { success: false, error: error.message };
+    }
+};
+
+const estimateCaloriesBurned = (workoutType, duration, weight_kg) => {
+    // Примерный расчет калорий на основе типа тренировки, времени и веса
+    const metValues = {
+        'кардио': 7,
+        'силовая': 5,
+        'йога': 3,
+        'пилатес': 3,
+        'бег': 8,
+        'плавание': 6,
+        'велосипед': 6,
+        'ходьба': 3.5,
+        'танцы': 5,
+        'фитнес': 5,
+        'тренажерный зал': 5,
+        'общая': 4.5
+    };
+
+    const workoutTypeLower = workoutType.toLowerCase();
+    let met = metValues['общая']; // значение по умолчанию
+
+    // Поиск соответствующего MET значения
+    for (const [type, value] of Object.entries(metValues)) {
+        if (workoutTypeLower.includes(type)) {
+            met = value;
+            break;
+        }
+    }
+
+    // Формула: калории = MET × вес (кг) × время (часы)
+    const hours = duration / 60;
+    const calories = Math.round(met * weight_kg * hours);
+    
+    return calories;
+};
+
+// --- Workout Tracking Functions ---
+const calculateCaloriesBurned = (workoutType, duration, exercises, profileData) => {
+    // Базовые коэффициенты калорий в минуту для разного веса (70кг базовый)
+    const calorieRates = {
+        'cardio': 8.5,      // Бег, велосипед
+        'strength': 4.5,    // Силовые тренировки
+        'yoga': 2.5,        // Йога, растяжка
+        'hiit': 10.0,       // Высокоинтенсивные тренировки
+        'swimming': 7.0,    // Плавание
+        'walking': 3.5,     // Ходьба
+        'other': 5.0        // Другие виды
+    };
+
+    const weightFactor = profileData?.weight_kg ? profileData.weight_kg / 70 : 1;
+    const baseRate = calorieRates[workoutType] || calorieRates['other'];
+    
+    // Дополнительные калории за конкретные упражнения
+    let exerciseCalories = 0;
+    if (exercises && exercises.length > 0) {
+        exercises.forEach(exercise => {
+            const exerciseName = exercise.toLowerCase();
+            if (exerciseName.includes('отжимани') || exerciseName.includes('push')) {
+                exerciseCalories += 0.5 * (exercise.match(/\d+/) ? parseInt(exercise.match(/\d+/)[0]) : 10);
+            } else if (exerciseName.includes('приседани') || exerciseName.includes('squat')) {
+                exerciseCalories += 0.4 * (exercise.match(/\d+/) ? parseInt(exercise.match(/\d+/)[0]) : 10);
+            } else if (exerciseName.includes('планка') || exerciseName.includes('plank')) {
+                exerciseCalories += 5; // За минуту планки
+            }
+        });
+    }
+
+    const totalCalories = Math.round((baseRate * duration * weightFactor) + exerciseCalories);
+    return Math.max(totalCalories, 10); // Минимум 10 калорий
+};
+
+const addWorkoutRecord = async (telegram_id, workoutData) => {
+    try {
+        const { data, error } = await supabase
+            .from('workout_records')
+            .insert({
+                telegram_id,
+                workout_type: workoutData.workout_type,
+                exercises: workoutData.exercises,
+                duration_minutes: workoutData.duration,
+                intensity: workoutData.intensity,
+                calories_burned: workoutData.calories_burned,
+                notes: workoutData.notes || '',
+                date: new Date().toISOString().split('T')[0],
+                created_at: new Date().toISOString()
+            });
+
+        if (error) throw error;
+        return { success: true, data };
+    } catch (error) {
+        console.error('Error adding workout record:', error);
+        return { success: false, error: error.message };
+    }
+};
+
+const getWorkoutTrackingStats = async (telegram_id, period = 'today') => {
+    try {
+        let startDate;
+        const today = new Date();
+        
+        switch (period) {
+            case 'today':
+                startDate = new Date(today).toISOString().split('T')[0];
+                break;
+            case 'week':
+                const weekStart = new Date(today.setDate(today.getDate() - 7));
+                startDate = weekStart.toISOString().split('T')[0];
+                break;
+            case 'month':
+                const monthStart = new Date(today.setDate(today.getDate() - 30));
+                startDate = monthStart.toISOString().split('T')[0];
+                break;
+        }
+
+        const { data: workouts, error } = await supabase
+            .from('workout_records')
+            .select('*')
+            .eq('telegram_id', telegram_id)
+            .gte('date', startDate)
+            .order('created_at', { ascending: false });
+
+        if (error) throw error;
+
+        const stats = {
+            totalWorkouts: workouts ? workouts.length : 0,
+            totalCalories: 0,
+            totalDuration: 0,
+            workoutTypes: {},
+            byDate: {}
+        };
+
+        if (workouts && workouts.length > 0) {
+            workouts.forEach(workout => {
+                stats.totalCalories += workout.calories_burned || 0;
+                stats.totalDuration += workout.duration_minutes || 0;
+                
+                // Группировка по типам
+                const type = workout.workout_type || 'other';
+                stats.workoutTypes[type] = (stats.workoutTypes[type] || 0) + 1;
+                
+                // Группировка по датам
+                const date = workout.date;
+                if (!stats.byDate[date]) {
+                    stats.byDate[date] = { count: 0, calories: 0, duration: 0 };
+                }
+                stats.byDate[date].count += 1;
+                stats.byDate[date].calories += workout.calories_burned || 0;
+                stats.byDate[date].duration += workout.duration_minutes || 0;
+            });
+        }
+
+        return { success: true, ...stats, workouts };
+    } catch (error) {
+        console.error('Error getting workout stats:', error);
+        return { success: false, error: error.message };
+    }
+};
+
+const getWorkoutPlanProgress = async (telegram_id) => {
+    try {
+        // Сначала получаем user_id по telegram_id
+        const { data: profile, error: profileError } = await supabase
+            .from('profiles')
+            .select('id')
+            .eq('telegram_id', telegram_id)
+            .single();
+
+        if (profileError || !profile) {
+            return { success: false, reason: 'Профиль пользователя не найден' };
+        }
+
+        // Получаем план тренировок пользователя
+        const { data: planData, error: planError } = await supabase
+            .from('workout_plan_data')
+            .select('*')
+            .eq('user_id', profile.id)
+            .single();
+
+        if (planError || !planData) {
+            return { success: false, reason: 'План тренировок не найден' };
+        }
+
+        // Получаем выполненные тренировки за эту неделю
+        const weekStart = new Date();
+        weekStart.setDate(weekStart.getDate() - weekStart.getDay()); // Начало недели
+        const weekStartStr = weekStart.toISOString().split('T')[0];
+
+        const { data: weekWorkouts, error: workoutError } = await supabase
+            .from('workout_records')
+            .select('*')
+            .eq('telegram_id', telegram_id)
+            .gte('date', weekStartStr);
+
+        if (workoutError) throw workoutError;
+
+        const completedWorkouts = weekWorkouts ? weekWorkouts.length : 0;
+        const plannedWorkouts = parseInt(planData.frequency_per_week) || 3;
+        const progressPercentage = Math.round((completedWorkouts / plannedWorkouts) * 100);
+
+        return {
+            success: true,
+            completed: completedWorkouts,
+            planned: plannedWorkouts,
+            progress: Math.min(progressPercentage, 100), // Максимум 100%
+            weekWorkouts: weekWorkouts || []
+        };
+    } catch (error) {
+        console.error('Error getting workout plan progress:', error);
+        return { success: false, error: error.message };
+    }
+};
+
+const createWorkoutProgressBar = (completed, planned) => {
+    const percentage = Math.round((completed / planned) * 100);
+    const filledBlocks = Math.round((percentage / 100) * 10);
+    const emptyBlocks = 10 - filledBlocks;
+    
+    const filled = '🟩'.repeat(filledBlocks);
+    const empty = '⬜'.repeat(emptyBlocks);
+    
+    return `${filled}${empty} ${percentage}%`;
+};
+
+// --- HTML Document Generation ---
+const generateWorkoutPlanHTML = (planContent, profileData, planData) => {
+    const currentDate = new Date().toLocaleDateString('ru-RU');
+    
+    // Парсим контент плана из Markdown в структурированные данные
+    const days = planContent.split('### День').filter(day => day.trim());
+    
+    let dayCards = '';
+    days.forEach((day, index) => {
+        if (index === 0) return; // Пропускаем первый элемент (заголовок)
+        
+        const lines = day.trim().split('\n');
+        const dayTitle = lines[0].replace(/^\d+\s*-\s*/, '');
+        
+        let exercises = '';
+        let isTable = false;
+        
+        lines.forEach(line => {
+            if (line.includes('|') && !line.includes('Упражнение')) {
+                isTable = true;
+                const parts = line.split('|').map(p => p.trim()).filter(p => p);
+                if (parts.length >= 4) {
+                    exercises += `
+                        <div class="exercise-row">
+                            <span class="exercise-name">${parts[0]}</span>
+                            <span class="exercise-sets">${parts[1]} подходов</span>
+                            <span class="exercise-reps">${parts[2]}</span>
+                            <span class="exercise-rest">${parts[3]}</span>
+                        </div>
+                    `;
+                }
+            }
+        });
+        
+        dayCards += `
+            <div class="day-card">
+                <h3>День ${index} - ${dayTitle}</h3>
+                <div class="exercises">
+                    ${exercises || '<p class="rest-day">День отдыха 😌</p>'}
+                </div>
+            </div>
+        `;
+    });
+    
+    return `
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Персональный план тренировок</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(45deg, #FF6B6B, #4ECDC4);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+        
+        .header p {
+            font-size: 1.2em;
+            opacity: 0.9;
+        }
+        
+        .user-info {
+            background: #f8f9fa;
+            padding: 20px;
+            border-left: 5px solid #4ECDC4;
+            margin: 20px;
+            border-radius: 10px;
+        }
+        
+        .user-info h3 {
+            color: #333;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+        }
+        
+        .user-info h3::before {
+            content: "👤";
+            margin-right: 10px;
+            font-size: 1.2em;
+        }
+        
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+        }
+        
+        .info-item {
+            padding: 10px;
+            background: white;
+            border-radius: 8px;
+            border: 1px solid #e9ecef;
+        }
+        
+        .info-label {
+            font-weight: bold;
+            color: #666;
+            font-size: 0.9em;
+        }
+        
+        .info-value {
+            color: #333;
+            font-size: 1.1em;
+            margin-top: 5px;
+        }
+        
+        .day-card {
+            margin: 20px;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.08);
+            overflow: hidden;
+            border: 1px solid #e9ecef;
+        }
+        
+        .day-card h3 {
+            background: linear-gradient(45deg, #6c5ce7, #fd79a8);
+            color: white;
+            padding: 20px;
+            margin: 0;
+            font-size: 1.3em;
+            text-align: center;
+        }
+        
+        .exercises {
+            padding: 20px;
+        }
+        
+        .exercise-row {
+            display: grid;
+            grid-template-columns: 2fr 1fr 1fr 1fr;
+            gap: 15px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 10px;
+            margin-bottom: 10px;
+            border-left: 4px solid #6c5ce7;
+            transition: transform 0.2s ease;
+        }
+        
+        .exercise-row:hover {
+            transform: translateX(5px);
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        .exercise-name {
+            font-weight: bold;
+            color: #333;
+        }
+        
+        .exercise-sets {
+            color: #e74c3c;
+            font-weight: 500;
+        }
+        
+        .exercise-reps {
+            color: #2ecc71;
+            font-weight: 500;
+        }
+        
+        .exercise-rest {
+            color: #3498db;
+            font-weight: 500;
+        }
+        
+        .rest-day {
+            text-align: center;
+            color: #666;
+            font-size: 1.2em;
+            padding: 20px;
+            background: #f1f3f4;
+            border-radius: 10px;
+        }
+        
+        .footer {
+            background: #2c3e50;
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+        
+        .tips {
+            margin: 20px;
+            padding: 20px;
+            background: linear-gradient(45deg, #ffecd2, #fcb69f);
+            border-radius: 15px;
+            border-left: 5px solid #f39c12;
+        }
+        
+        .tips h3 {
+            color: #d35400;
+            margin-bottom: 15px;
+        }
+        
+        .tips ul {
+            list-style: none;
+            padding-left: 0;
+        }
+        
+        .tips li {
+            margin: 8px 0;
+            padding-left: 25px;
+            position: relative;
+        }
+        
+        .tips li::before {
+            content: "💡";
+            position: absolute;
+            left: 0;
+        }
+        
+        @media print {
+            body {
+                background: white;
+                padding: 0;
+            }
+            
+            .container {
+                box-shadow: none;
+                border-radius: 0;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>💪 Персональный план тренировок</h1>
+            <p>Создан специально для вас</p>
+        </div>
+        
+        <div class="user-info">
+            <h3>Информация о пользователе</h3>
+            <div class="info-grid">
+                <div class="info-item">
+                    <div class="info-label">Имя</div>
+                    <div class="info-value">${profileData.first_name}</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Возраст</div>
+                    <div class="info-value">${profileData.age} лет</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Вес</div>
+                    <div class="info-value">${profileData.weight_kg} кг</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Цель</div>
+                    <div class="info-value">${profileData.goal}</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Опыт</div>
+                    <div class="info-value">${planData.experience}</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Частота</div>
+                    <div class="info-value">${planData.frequency} раз в неделю</div>
+                </div>
+            </div>
+        </div>
+        
+        ${dayCards}
+        
+        <div class="tips">
+            <h3>💡 Полезные советы</h3>
+            <ul>
+                <li>Всегда начинайте с разминки 5-10 минут</li>
+                <li>Пейте воду до, во время и после тренировки</li>
+                <li>Отдыхайте между подходами согласно плану</li>
+                <li>Прислушивайтесь к своему телу и не переусердствуйте</li>
+                <li>Постепенно увеличивайте нагрузку</li>
+                <li>Обязательно делайте растяжку после тренировки</li>
+            </ul>
+        </div>
+        
+        <div class="footer">
+            <p>План создан ${currentDate} | Telegram Bot NutriAI</p>
+            <p style="margin-top: 10px; opacity: 0.8;">Следите за прогрессом и достигайте целей! 🎯</p>
+        </div>
+    </div>
+</body>
+</html>
+    `;
+};
+
+const generateNutritionPlanHTML = (planContent, profileData, planData) => {
+    const currentDate = new Date().toLocaleDateString('ru-RU');
+    
+    // Парсим план питания
+    const sections = planContent.split('##').filter(section => section.trim());
+    
+    let dailyMeals = '';
+    let recommendations = '';
+    
+    sections.forEach(section => {
+        if (section.includes('День') || section.includes('день')) {
+            const lines = section.trim().split('\n');
+            const dayTitle = lines[0].trim();
+            
+            let meals = '';
+            lines.slice(1).forEach(line => {
+                if (line.includes('**') && (line.includes('Завтрак') || line.includes('Обед') || line.includes('Ужин') || line.includes('Перекус'))) {
+                    const mealName = line.replace(/\*\*/g, '').trim();
+                    meals += `<h4 class="meal-title">${mealName}</h4>`;
+                } else if (line.trim() && !line.includes('**')) {
+                    meals += `<p class="meal-item">${line.trim()}</p>`;
+                }
+            });
+            
+            dailyMeals += `
+                <div class="day-card">
+                    <h3>${dayTitle}</h3>
+                    <div class="meals">
+                        ${meals}
+                    </div>
+                </div>
+            `;
+        } else if (section.includes('рекомендаци') || section.includes('совет')) {
+            recommendations = section.trim();
+        }
+    });
+    
+    return `
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Персональный план питания</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(45deg, #FF9A8B, #A8E6CF);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+        
+        .user-info {
+            background: #f8f9fa;
+            padding: 20px;
+            border-left: 5px solid #A8E6CF;
+            margin: 20px;
+            border-radius: 10px;
+        }
+        
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+        }
+        
+        .info-item {
+            padding: 10px;
+            background: white;
+            border-radius: 8px;
+            border: 1px solid #e9ecef;
+        }
+        
+        .day-card {
+            margin: 20px;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.08);
+            overflow: hidden;
+            border: 1px solid #e9ecef;
+        }
+        
+        .day-card h3 {
+            background: linear-gradient(45deg, #FF9A8B, #FECFEF);
+            color: white;
+            padding: 20px;
+            margin: 0;
+            font-size: 1.3em;
+            text-align: center;
+        }
+        
+        .meals {
+            padding: 20px;
+        }
+        
+        .meal-title {
+            color: #2d3436;
+            margin: 15px 0 10px 0;
+            font-size: 1.2em;
+            padding: 10px;
+            background: linear-gradient(45deg, #fd79a8, #fdcb6e);
+            border-radius: 8px;
+            color: white;
+        }
+        
+        .meal-item {
+            margin: 8px 0;
+            padding: 8px 15px;
+            background: #f1f3f4;
+            border-radius: 5px;
+            border-left: 3px solid #fd79a8;
+        }
+        
+        .footer {
+            background: #2c3e50;
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🥗 Персональный план питания</h1>
+            <p>Здоровое питание для достижения ваших целей</p>
+        </div>
+        
+        <div class="user-info">
+            <h3>👤 Информация о пользователе</h3>
+            <div class="info-grid">
+                <div class="info-item">
+                    <div class="info-label">Имя</div>
+                    <div class="info-value">${profileData.first_name}</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Цель по калориям</div>
+                    <div class="info-value">${profileData.daily_calories} ккал</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Белки</div>
+                    <div class="info-value">${profileData.daily_protein} г</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Жиры</div>
+                    <div class="info-value">${profileData.daily_fat} г</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Углеводы</div>
+                    <div class="info-value">${profileData.daily_carbs} г</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Приемов пищи</div>
+                    <div class="info-value">${planData.mealsCount}</div>
+                </div>
+            </div>
+        </div>
+        
+        ${dailyMeals}
+        
+        <div class="footer">
+            <p>План создан ${currentDate} | Telegram Bot NutriAI</p>
+            <p style="margin-top: 10px; opacity: 0.8;">Питайтесь правильно и достигайте целей! 🎯</p>
+        </div>
+    </div>
+</body>
+</html>
+    `;
+};
+
+const sendPlanAsDocument = async (chatId, planType, htmlContent, filename) => {
+    try {
+        // Создаем временный файл
+        const fs = require('fs');
+        const path = require('path');
+        const tempDir = path.join(__dirname, 'temp');
+        
+        // Создаем папку temp если её нет
+        if (!fs.existsSync(tempDir)) {
+            fs.mkdirSync(tempDir);
+        }
+        
+        const filePath = path.join(tempDir, filename);
+        
+        // Записываем HTML в файл
+        fs.writeFileSync(filePath, htmlContent, 'utf8');
+        
+        // Отправляем файл
+        await bot.sendDocument(chatId, filePath, {
+            caption: `📄 Ваш персональный ${planType === 'workout' ? 'план тренировок' : 'план питания'}!\n\n✨ Откройте файл в браузере для лучшего просмотра\n📱 Можно сохранить и распечатать\n🎯 Следуйте плану для достижения целей!`,
+            reply_markup: {
+                inline_keyboard: [[
+                    { text: '📊 Отчет за день', callback_data: 'daily_report' },
+                    { text: '🏠 Главное меню', callback_data: 'main_menu' }
+                ]]
+            }
+        });
+        
+        // Удаляем временный файл
+        setTimeout(() => {
+            if (fs.existsSync(filePath)) {
+                fs.unlinkSync(filePath);
+            }
+        }, 5000);
+        
+    } catch (error) {
+        console.error('Ошибка отправки документа:', error);
+        await bot.sendMessage(chatId, '❌ Ошибка при создании документа. Попробуйте еще раз.');
+    }
+};
+
+// --- OCR for Documents ---
+const extractTextFromImage = async (imageUrl) => {
+    try {
+        console.log('Extracting text from image with OCR...');
+        
+        const response = await openai.chat.completions.create({
+            model: 'gpt-4o',
+            messages: [
+                {
+                    role: 'system',
+                    content: 'Ты эксперт по распознаванию текста. Извлеки весь текст из изображения, сохраняя структуру документа. Если это медицинский анализ, сохрани все показатели и их значения.'
+                },
+                {
+                    role: 'user',
+                    content: [
+                        { type: 'text', text: 'Извлеки весь текст из этого изображения:' },
+                        {
+                            type: 'image_url',
+                            image_url: { url: imageUrl }
+                        }
+                    ]
+                }
+            ],
+            max_tokens: 1000,
+        });
+
+        const extractedText = response.choices[0].message.content;
+        return { success: true, text: extractedText };
+
+    } catch (error) {
+        console.error('Error extracting text from image:', error);
+        return { success: false, error: 'Не удалось извлечь текст из изображения' };
+    }
+};
+
 // --- Water Tracking Functions ---
 const calculateWaterNorm = (weight_kg) => {
     // Рекомендуемая норма: 30-35 мл на кг веса
@@ -597,6 +1646,12 @@ const generateDailyReport = async (telegram_id) => {
         const todayWater = waterStats.success ? (waterStats.dailyStats[todayDateString] || 0) : 0;
         const waterNorm = waterStats.success ? waterStats.waterNorm : calculateWaterNorm(profile.weight_kg);
 
+        // Получаем тренировки за сегодня
+        const workoutStats = await getWorkoutTrackingStats(telegram_id, 'today');
+        const todayWorkoutCalories = workoutStats.success ? (workoutStats.byDate[todayDateString]?.calories || 0) : 0;
+        const todayWorkoutCount = workoutStats.success ? (workoutStats.byDate[todayDateString]?.count || 0) : 0;
+        const todayWorkoutDuration = workoutStats.success ? (workoutStats.byDate[todayDateString]?.duration || 0) : 0;
+
         // Подсчитываем калории и БЖУ
         const totals = todayMeals ? todayMeals.reduce((acc, meal) => {
             acc.calories += meal.calories || 0;
@@ -610,9 +1665,9 @@ const generateDailyReport = async (telegram_id) => {
         let reportText = `🌙 **Ваш отчет за сегодня, ${profile.first_name}!**\n\n`;
 
         // Проверяем, есть ли данные
-        if ((!todayMeals || todayMeals.length === 0) && todayWater === 0) {
-            reportText += `📋 Сегодня не было записей о еде и воде.\n`;
-            reportText += `💡 Не забывайте отслеживать свое питание и водный баланс!\n\n`;
+        if ((!todayMeals || todayMeals.length === 0) && todayWater === 0 && todayWorkoutCount === 0) {
+            reportText += `📋 Сегодня не было записей о еде, воде и тренировках.\n`;
+            reportText += `💡 Не забывайте отслеживать свое питание, водный баланс и активность!\n\n`;
             reportText += `Хорошего вечера! 🌟`;
             return reportText;
         }
@@ -638,6 +1693,28 @@ const generateDailyReport = async (telegram_id) => {
         reportText += `${todayWater} / ${waterNorm} мл (${waterPercentage}%)\n`;
         reportText += `${createProgressBar(todayWater, waterNorm)}\n\n`;
 
+        // Статистика тренировок
+        if (todayWorkoutCount > 0) {
+            reportText += `💪 **Тренировки:**\n`;
+            if (todayWorkoutCount === 1) {
+                reportText += `🏃‍♂️ Проведена 1 тренировка\n`;
+            } else {
+                reportText += `🏃‍♂️ Проведено ${todayWorkoutCount} тренировки\n`;
+            }
+            reportText += `⏱️ Общее время: ${todayWorkoutDuration} мин\n`;
+            reportText += `🔥 Сожжено калорий: ~${todayWorkoutCalories} ккал\n\n`;
+
+            // Показываем прогресс по плану
+            const progressResult = await getWorkoutPlanProgress(telegram_id);
+            if (progressResult.success) {
+                reportText += `📊 **Прогресс по плану тренировок:**\n`;
+                reportText += `${createWorkoutProgressBar(progressResult.completed, progressResult.planned)}\n`;
+                reportText += `Выполнено: ${progressResult.completed} из ${progressResult.planned} на этой неделе\n\n`;
+            }
+        } else {
+            reportText += `💪 **Тренировки:** Сегодня не было\n\n`;
+        }
+
         // Мотивационные сообщения и рекомендации
         reportText += `📊 **Итоги дня:**\n`;
         
@@ -654,6 +1731,12 @@ const generateDailyReport = async (telegram_id) => {
         if (totals.protein >= profile.daily_protein * 0.8) {
             achievements.push('🥩 Хорошее потребление белка!');
         }
+        if (todayWorkoutCount > 0) {
+            achievements.push('💪 Сегодня была активность!');
+        }
+        if (todayWorkoutCalories >= 200) {
+            achievements.push('🔥 Отлично сожгли калории!');
+        }
 
         // Формируем рекомендации
         if (!todayMeals || totals.calories < profile.daily_calories * 0.7) {
@@ -664,6 +1747,15 @@ const generateDailyReport = async (telegram_id) => {
         }
         if (totals.protein < profile.daily_protein * 0.7) {
             recommendations.push('🥩 Добавьте больше белковых продуктов');
+        }
+        if (todayWorkoutCount === 0) {
+            recommendations.push('💪 Попробуйте добавить немного активности завтра');
+        }
+        
+        // Проверяем прогресс по плану тренировок
+        const progressResult = await getWorkoutPlanProgress(telegram_id);
+        if (progressResult.success && progressResult.progress < 50) {
+            recommendations.push('🏃‍♂️ Не забывайте про план тренировок на неделе');
         }
 
         if (achievements.length > 0) {
@@ -774,7 +1866,7 @@ const setupBot = (app) => {
     });
 
     console.log('Обработчик для вебхука на Express настроен.');
-    
+
     // --- Main Menu Function ---
     const showMainMenu = (chat_id, text) => {
         bot.sendMessage(chat_id, text, {
@@ -838,8 +1930,8 @@ const setupBot = (app) => {
 
             if (profileError || !profile) {
                 bot.sendMessage(chat_id, 'Профиль не найден');
-                return;
-            }
+            return;
+        }
 
             // Получаем все записи о еде за сегодня
             const { startDate, endDate } = getDateRange('today');
@@ -891,7 +1983,7 @@ const setupBot = (app) => {
     bot.onText(/\/test_daily_report/, async (msg) => {
         const telegram_id = msg.from.id;
         const chat_id = msg.chat.id;
-        
+
         // Можете поменять этот ID на ваш telegram_id для тестирования
         const adminId = '123456789'; // Замените на ваш telegram_id
         
@@ -1013,6 +2105,7 @@ const setupBot = (app) => {
             return;
         }
 
+
         // --- Photo Handler ---
         if (msg.photo) {
             const thinkingMessage = await bot.sendMessage(chat_id, 'Получил ваше фото! 📸 Анализирую с помощью ИИ, это может занять несколько секунд...');
@@ -1053,6 +2146,402 @@ const setupBot = (app) => {
             } catch (error) {
                 console.error("Ошибка при обработке фото:", error);
                 await bot.editMessageText('Произошла внутренняя ошибка. Не удалось обработать фото.', {
+                    chat_id: thinkingMessage.chat.id,
+                    message_id: thinkingMessage.message_id
+                });
+            }
+            return;
+        }
+
+                // --- Voice Message Handler ---
+        if (msg.voice) {
+            const thinkingMessage = await bot.sendMessage(chat_id, '🎤 Получил голосовое сообщение! Преобразую речь в текст...');
+            try {
+                const voice = msg.voice;
+                const fileInfo = await bot.getFile(voice.file_id);
+                const voiceUrl = `https://api.telegram.org/file/bot${token}/${fileInfo.file_path}`;
+                
+                const transcriptionResult = await processVoiceMessage(voiceUrl);
+                
+                if (transcriptionResult.success) {
+                    await bot.editMessageText(`🎤 Обрабатываю сообщение: "${transcriptionResult.text}"`, {
+                        chat_id: thinkingMessage.chat.id,
+                        message_id: thinkingMessage.message_id
+                    });
+
+                    // Получаем профиль пользователя
+                    const { data: profile } = await supabase
+                        .from('profiles')
+                        .select('first_name, gender, age, height_cm, weight_kg, goal, id')
+                        .eq('telegram_id', telegram_id)
+                        .single();
+
+                    // Используем универсального агента
+                    const universalResult = await processUniversalMessage(transcriptionResult.text, profile);
+                    
+                    if (universalResult.success) {
+                        const analysisData = universalResult.data;
+                        
+                        // Выполняем действие в зависимости от типа сообщения
+                        switch (analysisData.action_required) {
+                            case 'analyze_food':
+                                // Анализируем еду через OpenAI для получения КБЖУ
+                                const foodAnalysisResult = await recognizeFoodFromText(analysisData.extracted_data.meal_description || transcriptionResult.text);
+                                
+                                if (foodAnalysisResult.success) {
+                                    const mealData = foodAnalysisResult.data;
+                                    const confirmationId = crypto.randomUUID();
+                                    mealConfirmationCache[confirmationId] = { ...mealData, meal_type: 'voice', telegram_id };
+
+                                    const callback_data = `meal_confirm_${confirmationId}`;
+                                    const cancel_callback_data = `meal_cancel_${confirmationId}`;
+                                    const ingredientsString = mealData.ingredients ? mealData.ingredients.join(', ') : 'Не указаны';
+
+                                    const responseText = `🎤 **Распознанная еда:** ${mealData.dish_name}\n\n*Ингредиенты:* ${ingredientsString}\n*КБЖУ:*\n- Калории: ${mealData.calories} ккал\n- Белки: ${mealData.protein} г\n- Жиры: ${mealData.fat} г\n- Углеводы: ${mealData.carbs} г\n\nСохранить этот приём пищи?`;
+
+                                    await bot.editMessageText(responseText, {
+                                        chat_id: thinkingMessage.chat.id,
+                                        message_id: thinkingMessage.message_id,
+                                        parse_mode: 'Markdown',
+                                        reply_markup: {
+                                            inline_keyboard: [
+                                                [{ text: '✅ Да, сохранить', callback_data }, { text: '❌ Нет, отменить', callback_data: cancel_callback_data }]
+                                            ]
+                                        }
+                                    });
+                                } else {
+                                    await bot.editMessageText(analysisData.response_text, {
+                                        chat_id: thinkingMessage.chat.id,
+                                        message_id: thinkingMessage.message_id,
+                                        parse_mode: 'Markdown'
+                                    });
+                                }
+                                break;
+
+                            case 'add_water':
+                                // Добавляем воду
+                                const waterAmount = analysisData.extracted_data.amount_ml;
+                                
+                                if (waterAmount && waterAmount > 0) {
+                                    const result = await addWaterIntake(telegram_id, waterAmount);
+                                    
+                                    if (result.success) {
+                                        const waterStats = await getWaterStats(telegram_id, 'today');
+                                        const today = new Date().toISOString().split('T')[0];
+                                        const todayWater = waterStats.dailyStats[today] || 0;
+                                        const percentage = Math.round((todayWater / waterStats.waterNorm) * 100);
+                                        
+                                        let responseText = `💧 **Добавлено:** ${waterAmount} мл\n\n`;
+                                        responseText += `📊 Сегодня выпито: ${todayWater} / ${waterStats.waterNorm} мл (${percentage}%)\n`;
+                                        responseText += `${createProgressBar(todayWater, waterStats.waterNorm)}\n\n`;
+                                        
+                                        if (percentage >= 100) {
+                                            responseText += `🎉 Отлично! Вы выполнили дневную норму воды!`;
+                                        } else {
+                                            const remaining = waterStats.waterNorm - todayWater;
+                                            responseText += `💪 Осталось: ${remaining} мл до нормы`;
+                                        }
+                                        
+                                        await bot.editMessageText(responseText, {
+                                            chat_id: thinkingMessage.chat.id,
+                                            message_id: thinkingMessage.message_id,
+                                            parse_mode: 'Markdown'
+                                        });
+                                    } else {
+                                        await bot.editMessageText(`❌ Ошибка при добавлении воды: ${result.error}`, {
+                                            chat_id: thinkingMessage.chat.id,
+                                            message_id: thinkingMessage.message_id
+                                        });
+                                    }
+                                } else {
+                                    await bot.editMessageText(analysisData.response_text, {
+                                        chat_id: thinkingMessage.chat.id,
+                                        message_id: thinkingMessage.message_id,
+                                        parse_mode: 'Markdown'
+                                    });
+                                }
+                                break;
+
+                            case 'log_workout':
+                                // Логируем тренировку
+                                const workoutData = analysisData.extracted_data;
+                                
+                                // Определяем тип тренировки
+                                let workoutType = 'other';
+                                const workoutText = transcriptionResult.text.toLowerCase();
+                                if (workoutText.includes('бег') || workoutText.includes('пробег') || workoutText.includes('кардио')) {
+                                    workoutType = 'cardio';
+                                } else if (workoutText.includes('зал') || workoutText.includes('жим') || workoutText.includes('тяга') || workoutText.includes('силов')) {
+                                    workoutType = 'strength';
+                                } else if (workoutText.includes('йога') || workoutText.includes('растяжка') || workoutText.includes('стретч')) {
+                                    workoutType = 'yoga';
+                                } else if (workoutText.includes('плавани') || workoutText.includes('бассейн')) {
+                                    workoutType = 'swimming';
+                                } else if (workoutText.includes('ходьба') || workoutText.includes('прогулка')) {
+                                    workoutType = 'walking';
+                                } else if (workoutText.includes('hiit') || workoutText.includes('интервал')) {
+                                    workoutType = 'hiit';
+                                }
+
+                                // Парсим длительность из текста
+                                let duration = 30; // По умолчанию
+                                const durationMatch = transcriptionResult.text.match(/(\d+)\s*(минут|мин|час)/i);
+                                if (durationMatch) {
+                                    duration = parseInt(durationMatch[1]);
+                                    if (durationMatch[2].includes('час')) {
+                                        duration *= 60;
+                                    }
+                                }
+
+                                // Извлекаем упражнения
+                                const exercises = workoutData.exercises || [];
+
+                                // Рассчитываем калории
+                                const caloriesBurned = calculateCaloriesBurned(workoutType, duration, exercises, profile);
+
+                                const workoutRecord = {
+                                    workout_type: workoutType,
+                                    exercises: exercises,
+                                    duration: duration,
+                                    intensity: workoutData.intensity || 'средняя',
+                                    calories_burned: caloriesBurned,
+                                    notes: transcriptionResult.text
+                                };
+
+                                const result = await addWorkoutRecord(telegram_id, workoutRecord);
+                                
+                                if (result.success) {
+                                    // Получаем прогресс по плану
+                                    const progressResult = await getWorkoutPlanProgress(telegram_id);
+                                    
+                                    let responseText = `💪 **Тренировка записана!**\n\n`;
+                                    
+                                    if (exercises.length > 0) {
+                                        responseText += `📋 **Упражнения:**\n`;
+                                        exercises.forEach(exercise => {
+                                            responseText += `• ${exercise}\n`;
+                                        });
+                                        responseText += `\n`;
+                                    }
+                                    
+                                    responseText += `⏱️ **Длительность:** ${duration} мин\n`;
+                                    responseText += `🔥 **Сожжено калорий:** ~${caloriesBurned} ккал\n`;
+                                    responseText += `💯 **Интенсивность:** ${workoutRecord.intensity}\n\n`;
+                                    
+                                    // Добавляем прогресс-бар если есть план
+                                    if (progressResult.success) {
+                                        responseText += `📊 **Прогресс по плану:**\n`;
+                                        responseText += `${createWorkoutProgressBar(progressResult.completed, progressResult.planned)}\n`;
+                                        responseText += `Выполнено: ${progressResult.completed} из ${progressResult.planned} тренировок на этой неделе\n\n`;
+                                    }
+                                    
+                                    responseText += `🎉 Отличная работа! Так держать! 💪`;
+
+                                    await bot.editMessageText(responseText, {
+                                        chat_id: thinkingMessage.chat.id,
+                                        message_id: thinkingMessage.message_id,
+                                        parse_mode: 'Markdown'
+                                    });
+                                } else {
+                                    await bot.editMessageText(`❌ Ошибка при сохранении тренировки: ${result.error}`, {
+                                        chat_id: thinkingMessage.chat.id,
+                                        message_id: thinkingMessage.message_id
+                                    });
+                                }
+                                break;
+
+                            case 'generate_report':
+                                // Генерируем отчет
+                                const report = await generateDailyReport(telegram_id);
+                                
+                                if (report.success) {
+                                    await bot.editMessageText(report.text, {
+                                        chat_id: thinkingMessage.chat.id,
+                                        message_id: thinkingMessage.message_id,
+                                        parse_mode: 'Markdown'
+                                    });
+                                } else {
+                                    await bot.editMessageText('❌ Не удалось сгенерировать отчет. Возможно, у вас нет данных за сегодня.', {
+                                        chat_id: thinkingMessage.chat.id,
+                                        message_id: thinkingMessage.message_id
+                                    });
+                                }
+                                break;
+
+                            case 'analyze_medical':
+                                // Анализируем медицинские данные
+                                const medicalResult = await analyzeMedicalData(transcriptionResult.text, profile);
+                                
+                                if (medicalResult.success) {
+                                    const data = medicalResult.data;
+                                    let responseText = `🔬 **Анализ медицинских данных**\n\n`;
+                                    responseText += `📋 **Обнаруженные показатели:**\n${data.detected_parameters.join(', ')}\n\n`;
+                                    responseText += `📊 **Краткий анализ:**\n${data.analysis_summary}\n\n`;
+                                    
+                                    if (data.nutrition_recommendations.foods_to_include.length > 0) {
+                                        responseText += `✅ **Рекомендуемые продукты:**\n${data.nutrition_recommendations.foods_to_include.join(', ')}\n\n`;
+                                    }
+                                    
+                                    responseText += `*Это рекомендации ИИ, не замена консультации врача.*`;
+
+                                    await bot.editMessageText(responseText, {
+                                        chat_id: thinkingMessage.chat.id,
+                                        message_id: thinkingMessage.message_id,
+                                        parse_mode: 'Markdown'
+                                    });
+                                } else {
+                                    await bot.editMessageText(analysisData.response_text, {
+                                        chat_id: thinkingMessage.chat.id,
+                                        message_id: thinkingMessage.message_id,
+                                        parse_mode: 'Markdown'
+                                    });
+                                }
+                                break;
+
+                            case 'answer_question':
+                                // Отвечаем на вопрос
+                                const questionResult = await answerUserQuestion(transcriptionResult.text, profile);
+                                
+                                if (questionResult.success) {
+                                    await bot.editMessageText(`🎤 **Ваш вопрос:** "${transcriptionResult.text}"\n\n${questionResult.answer}`, {
+                                        chat_id: thinkingMessage.chat.id,
+                                        message_id: thinkingMessage.message_id,
+                                        parse_mode: 'Markdown'
+                                    });
+                                } else {
+                                    await bot.editMessageText(analysisData.response_text, {
+                                        chat_id: thinkingMessage.chat.id,
+                                        message_id: thinkingMessage.message_id,
+                                        parse_mode: 'Markdown'
+                                    });
+                                }
+                                break;
+
+                            default:
+                                // Все остальные случаи - дружелюбный ответ
+                                await bot.editMessageText(`🎤 **Услышал:** "${transcriptionResult.text}"\n\n${analysisData.response_text}`, {
+                                    chat_id: thinkingMessage.chat.id,
+                                    message_id: thinkingMessage.message_id,
+                                    parse_mode: 'Markdown'
+                                });
+                                break;
+                        }
+                    } else {
+                        await bot.editMessageText(`🎤 **Распознано:** "${transcriptionResult.text}"\n\nИзвините, не смог понять ваше сообщение.`, {
+                            chat_id: thinkingMessage.chat.id,
+                            message_id: thinkingMessage.message_id,
+                            parse_mode: 'Markdown'
+                        });
+                    }
+                } else {
+                    await bot.editMessageText(`❌ ${transcriptionResult.error}`, {
+                        chat_id: thinkingMessage.chat.id,
+                        message_id: thinkingMessage.message_id
+                    });
+                }
+            } catch (error) {
+                console.error("Ошибка при обработке голосового сообщения:", error);
+                await bot.editMessageText('Произошла ошибка при обработке голосового сообщения.', {
+                    chat_id: thinkingMessage.chat.id,
+                    message_id: thinkingMessage.message_id
+                });
+            }
+            return;
+        }
+
+                // --- Document Handler ---
+        if (msg.document) {
+            const thinkingMessage = await bot.sendMessage(chat_id, '📄 Получил документ! Анализирую содержимое...');
+            try {
+                const document = msg.document;
+                const fileInfo = await bot.getFile(document.file_id);
+                const documentUrl = `https://api.telegram.org/file/bot${token}/${fileInfo.file_path}`;
+                
+                // Если это изображение, извлекаем текст через OCR
+                if (document.mime_type && document.mime_type.startsWith('image/')) {
+                    const extractionResult = await extractTextFromImage(documentUrl);
+                    
+                    if (extractionResult.success) {
+                        await bot.editMessageText(`📄 Анализирую извлеченный текст...`, {
+                            chat_id: thinkingMessage.chat.id,
+                            message_id: thinkingMessage.message_id
+                        });
+
+                        const { data: profile } = await supabase
+                            .from('profiles')
+                            .select('first_name, gender, age, height_cm, weight_kg, goal, id')
+                            .eq('telegram_id', telegram_id)
+                            .single();
+
+                        // Используем универсального агента для анализа извлеченного текста
+                        const universalResult = await processUniversalMessage(extractionResult.text, profile);
+                        
+                        if (universalResult.success) {
+                            const analysisData = universalResult.data;
+                            
+                            // Выполняем действие в зависимости от типа содержимого
+                            switch (analysisData.action_required) {
+                                case 'analyze_medical':
+                                    // Анализируем медицинские данные
+                                    const medicalResult = await analyzeMedicalData(extractionResult.text, profile);
+                                    
+                                    if (medicalResult.success) {
+                                        const data = medicalResult.data;
+                                        let responseText = `🔬 **Анализ документа**\n\n`;
+                                        responseText += `📋 **Обнаруженные показатели:**\n${data.detected_parameters.join(', ')}\n\n`;
+                                        responseText += `📊 **Краткий анализ:**\n${data.analysis_summary}\n\n`;
+                                        
+                                        if (data.nutrition_recommendations.foods_to_include.length > 0) {
+                                            responseText += `✅ **Рекомендуемые продукты:**\n${data.nutrition_recommendations.foods_to_include.join(', ')}\n\n`;
+                                        }
+                                        
+                                        responseText += `*Это рекомендации ИИ, не замена консультации врача.*`;
+
+                                        await bot.editMessageText(responseText, {
+                                            chat_id: thinkingMessage.chat.id,
+                                            message_id: thinkingMessage.message_id,
+                                            parse_mode: 'Markdown'
+                                        });
+                                    } else {
+                                        await bot.editMessageText(`📄 **Извлеченный текст:**\n\n${extractionResult.text.substring(0, 800)}${extractionResult.text.length > 800 ? '...' : ''}\n\n${analysisData.response_text}`, {
+                                            chat_id: thinkingMessage.chat.id,
+                                            message_id: thinkingMessage.message_id,
+                                            parse_mode: 'Markdown'
+                                        });
+                                    }
+                                    break;
+
+                                default:
+                                    // Другие типы документов
+                                    await bot.editMessageText(`📄 **Извлеченный текст:**\n\n${extractionResult.text.substring(0, 800)}${extractionResult.text.length > 800 ? '...' : ''}\n\n${analysisData.response_text}`, {
+                                        chat_id: thinkingMessage.chat.id,
+                                        message_id: thinkingMessage.message_id,
+                                        parse_mode: 'Markdown'
+                                    });
+                                    break;
+                            }
+                        } else {
+                            await bot.editMessageText(`📄 **Извлеченный текст:**\n\n${extractionResult.text.substring(0, 1000)}${extractionResult.text.length > 1000 ? '...' : ''}`, {
+                                chat_id: thinkingMessage.chat.id,
+                                message_id: thinkingMessage.message_id,
+                                parse_mode: 'Markdown'
+                            });
+                        }
+                    } else {
+                        await bot.editMessageText(`❌ ${extractionResult.error}`, {
+                            chat_id: thinkingMessage.chat.id,
+                            message_id: thinkingMessage.message_id
+                        });
+                    }
+                } else {
+                    await bot.editMessageText('Пока поддерживаются только изображения документов. Попробуйте отправить фото анализа.', {
+                        chat_id: thinkingMessage.chat.id,
+                        message_id: thinkingMessage.message_id
+                    });
+                }
+            } catch (error) {
+                console.error("Ошибка при обработке документа:", error);
+                await bot.editMessageText('Произошла ошибка при обработке документа.', {
                     chat_id: thinkingMessage.chat.id,
                     message_id: thinkingMessage.message_id
                 });
@@ -1138,7 +2627,7 @@ const setupBot = (app) => {
         }
 
         if (manualAddStep === 'awaiting_input') {
-            delete manualAddState[telegram_id];
+                delete manualAddState[telegram_id];
             const thinkingMessage = await bot.sendMessage(chat_id, 'Получил ваш запрос! ✍️ Анализирую с помощью ИИ, это может занять несколько секунд...');
             try {
                 const parts = msg.text.split(',').map(p => p.trim());
@@ -1244,6 +2733,284 @@ const setupBot = (app) => {
                     break;
             }
         }
+
+        // --- Universal Text Message Handler ---
+        // Если сообщение не попало ни в одну из категорий выше, обрабатываем универсальным агентом
+        if (msg.text && !msg.text.startsWith('/')) {
+            const thinkingMessage = await bot.sendMessage(chat_id, '🤔 Анализирую ваше сообщение...');
+            
+            try {
+                // Получаем профиль пользователя
+                const { data: profile } = await supabase
+                    .from('profiles')
+                    .select('first_name, gender, age, height_cm, weight_kg, goal, id')
+                    .eq('telegram_id', telegram_id)
+                    .single();
+
+                // Используем универсального агента
+                const universalResult = await processUniversalMessage(msg.text, profile);
+                
+                if (universalResult.success) {
+                    const analysisData = universalResult.data;
+                    
+                    // Выполняем действие в зависимости от типа сообщения
+                    switch (analysisData.action_required) {
+                        case 'analyze_food':
+                            // Анализируем еду через OpenAI для получения КБЖУ
+                            const foodAnalysisResult = await recognizeFoodFromText(analysisData.extracted_data.meal_description || msg.text);
+                            
+                            if (foodAnalysisResult.success) {
+                                const mealData = foodAnalysisResult.data;
+                                const confirmationId = crypto.randomUUID();
+                                mealConfirmationCache[confirmationId] = { ...mealData, meal_type: 'text', telegram_id };
+
+                                const callback_data = `meal_confirm_${confirmationId}`;
+                                const cancel_callback_data = `meal_cancel_${confirmationId}`;
+                                const ingredientsString = mealData.ingredients ? mealData.ingredients.join(', ') : 'Не указаны';
+
+                                const responseText = `💬 **Распознанная еда:** ${mealData.dish_name}\n\n*Ингредиенты:* ${ingredientsString}\n*КБЖУ:*\n- Калории: ${mealData.calories} ккал\n- Белки: ${mealData.protein} г\n- Жиры: ${mealData.fat} г\n- Углеводы: ${mealData.carbs} г\n\nСохранить этот приём пищи?`;
+
+                                await bot.editMessageText(responseText, {
+                                    chat_id: thinkingMessage.chat.id,
+                                    message_id: thinkingMessage.message_id,
+                                    parse_mode: 'Markdown',
+                                    reply_markup: {
+                                        inline_keyboard: [
+                                            [{ text: '✅ Да, сохранить', callback_data }, { text: '❌ Нет, отменить', callback_data: cancel_callback_data }]
+                                        ]
+                                    }
+                                });
+                            } else {
+                                await bot.editMessageText(analysisData.response_text, {
+                                    chat_id: thinkingMessage.chat.id,
+                                    message_id: thinkingMessage.message_id,
+                                    parse_mode: 'Markdown'
+                                });
+                            }
+                            break;
+
+                        case 'add_water':
+                            // Добавляем воду
+                            const waterAmount = analysisData.extracted_data.amount_ml;
+                            
+                            if (waterAmount && waterAmount > 0) {
+                                const result = await addWaterIntake(telegram_id, waterAmount);
+                                
+                                if (result.success) {
+                                    const waterStats = await getWaterStats(telegram_id, 'today');
+                                    const today = new Date().toISOString().split('T')[0];
+                                    const todayWater = waterStats.dailyStats[today] || 0;
+                                    const percentage = Math.round((todayWater / waterStats.waterNorm) * 100);
+                                    
+                                    let responseText = `💧 **Добавлено:** ${waterAmount} мл\n\n`;
+                                    responseText += `📊 Сегодня выпито: ${todayWater} / ${waterStats.waterNorm} мл (${percentage}%)\n`;
+                                    responseText += `${createProgressBar(todayWater, waterStats.waterNorm)}\n\n`;
+                                    
+                                    if (percentage >= 100) {
+                                        responseText += `🎉 Отлично! Вы выполнили дневную норму воды!`;
+                                    } else {
+                                        const remaining = waterStats.waterNorm - todayWater;
+                                        responseText += `💪 Осталось: ${remaining} мл до нормы`;
+                                    }
+                                    
+                                    await bot.editMessageText(responseText, {
+                                        chat_id: thinkingMessage.chat.id,
+                                        message_id: thinkingMessage.message_id,
+                                        parse_mode: 'Markdown'
+                                    });
+                                } else {
+                                    await bot.editMessageText(`❌ Ошибка при добавлении воды: ${result.error}`, {
+                                        chat_id: thinkingMessage.chat.id,
+                                        message_id: thinkingMessage.message_id
+                                    });
+                                }
+                            } else {
+                                await bot.editMessageText(analysisData.response_text, {
+                                    chat_id: thinkingMessage.chat.id,
+                                    message_id: thinkingMessage.message_id,
+                                    parse_mode: 'Markdown'
+                                });
+                            }
+                            break;
+
+                        case 'log_workout':
+                            // Логируем тренировку
+                            const workoutData = analysisData.extracted_data;
+                            
+                            // Определяем тип тренировки
+                            let workoutType = 'other';
+                            const workoutText = msg.text.toLowerCase();
+                            if (workoutText.includes('бег') || workoutText.includes('пробег') || workoutText.includes('кардио')) {
+                                workoutType = 'cardio';
+                            } else if (workoutText.includes('зал') || workoutText.includes('жим') || workoutText.includes('тяга') || workoutText.includes('силов')) {
+                                workoutType = 'strength';
+                            } else if (workoutText.includes('йога') || workoutText.includes('растяжка') || workoutText.includes('стретч')) {
+                                workoutType = 'yoga';
+                            } else if (workoutText.includes('плавани') || workoutText.includes('бассейн')) {
+                                workoutType = 'swimming';
+                            } else if (workoutText.includes('ходьба') || workoutText.includes('прогулка')) {
+                                workoutType = 'walking';
+                            } else if (workoutText.includes('hiit') || workoutText.includes('интервал')) {
+                                workoutType = 'hiit';
+                            }
+
+                            // Парсим длительность из текста
+                            let duration = 30; // По умолчанию
+                            const durationMatch = msg.text.match(/(\d+)\s*(минут|мин|час)/i);
+                            if (durationMatch) {
+                                duration = parseInt(durationMatch[1]);
+                                if (durationMatch[2].includes('час')) {
+                                    duration *= 60;
+                                }
+                            }
+
+                            // Извлекаем упражнения
+                            const exercises = workoutData.exercises || [];
+
+                            // Рассчитываем калории
+                            const caloriesBurned = calculateCaloriesBurned(workoutType, duration, exercises, profile);
+
+                            const workoutRecord = {
+                                workout_type: workoutType,
+                                exercises: exercises,
+                                duration: duration,
+                                intensity: workoutData.intensity || 'средняя',
+                                calories_burned: caloriesBurned,
+                                notes: msg.text
+                            };
+
+                            const result = await addWorkoutRecord(telegram_id, workoutRecord);
+                            
+                            if (result.success) {
+                                // Получаем прогресс по плану
+                                const progressResult = await getWorkoutPlanProgress(telegram_id);
+                                
+                                let responseText = `💪 **Тренировка записана!**\n\n`;
+                                
+                                if (exercises.length > 0) {
+                                    responseText += `📋 **Упражнения:**\n`;
+                                    exercises.forEach(exercise => {
+                                        responseText += `• ${exercise}\n`;
+                                    });
+                                    responseText += `\n`;
+                                }
+                                
+                                responseText += `⏱️ **Длительность:** ${duration} мин\n`;
+                                responseText += `🔥 **Сожжено калорий:** ~${caloriesBurned} ккал\n`;
+                                responseText += `💯 **Интенсивность:** ${workoutRecord.intensity}\n\n`;
+                                
+                                // Добавляем прогресс-бар если есть план
+                                if (progressResult.success) {
+                                    responseText += `📊 **Прогресс по плану:**\n`;
+                                    responseText += `${createWorkoutProgressBar(progressResult.completed, progressResult.planned)}\n`;
+                                    responseText += `Выполнено: ${progressResult.completed} из ${progressResult.planned} тренировок на этой неделе\n\n`;
+                                }
+                                
+                                responseText += `🎉 Отличная работа! Так держать! 💪`;
+
+                                await bot.editMessageText(responseText, {
+                                    chat_id: thinkingMessage.chat.id,
+                                    message_id: thinkingMessage.message_id,
+                                    parse_mode: 'Markdown'
+                                });
+                            } else {
+                                await bot.editMessageText(`❌ Ошибка при сохранении тренировки: ${result.error}`, {
+                                    chat_id: thinkingMessage.chat.id,
+                                    message_id: thinkingMessage.message_id
+                                });
+                            }
+                            break;
+
+                        case 'generate_report':
+                            // Генерируем отчет
+                            const report = await generateDailyReport(telegram_id);
+                            
+                            if (report.success) {
+                                await bot.editMessageText(report.text, {
+                                    chat_id: thinkingMessage.chat.id,
+                                    message_id: thinkingMessage.message_id,
+                                    parse_mode: 'Markdown'
+                                });
+                            } else {
+                                await bot.editMessageText('❌ Не удалось сгенерировать отчет. Возможно, у вас нет данных за сегодня.', {
+                                    chat_id: thinkingMessage.chat.id,
+                                    message_id: thinkingMessage.message_id
+                                });
+                            }
+                            break;
+
+                        case 'analyze_medical':
+                            // Анализируем медицинские данные
+                            const medicalResult = await analyzeMedicalData(msg.text, profile);
+                            
+                            if (medicalResult.success) {
+                                const data = medicalResult.data;
+                                let responseText = `🔬 **Анализ медицинских данных**\n\n`;
+                                responseText += `📋 **Обнаруженные показатели:**\n${data.detected_parameters.join(', ')}\n\n`;
+                                responseText += `📊 **Краткий анализ:**\n${data.analysis_summary}\n\n`;
+                                
+                                if (data.nutrition_recommendations.foods_to_include.length > 0) {
+                                    responseText += `✅ **Рекомендуемые продукты:**\n${data.nutrition_recommendations.foods_to_include.join(', ')}\n\n`;
+                                }
+                                
+                                responseText += `*Это рекомендации ИИ, не замена консультации врача.*`;
+
+                                await bot.editMessageText(responseText, {
+                                    chat_id: thinkingMessage.chat.id,
+                                    message_id: thinkingMessage.message_id,
+                                    parse_mode: 'Markdown'
+                                });
+                            } else {
+                                await bot.editMessageText(analysisData.response_text, {
+                                    chat_id: thinkingMessage.chat.id,
+                                    message_id: thinkingMessage.message_id,
+                                    parse_mode: 'Markdown'
+                                });
+                            }
+                            break;
+
+                        case 'answer_question':
+                            // Отвечаем на вопрос
+                            const questionResult = await answerUserQuestion(msg.text, profile);
+                            
+                            if (questionResult.success) {
+                                await bot.editMessageText(questionResult.answer, {
+                                    chat_id: thinkingMessage.chat.id,
+                                    message_id: thinkingMessage.message_id,
+                                    parse_mode: 'Markdown'
+                                });
+                            } else {
+                                await bot.editMessageText(analysisData.response_text, {
+                                    chat_id: thinkingMessage.chat.id,
+                                    message_id: thinkingMessage.message_id,
+                                    parse_mode: 'Markdown'
+                                });
+                            }
+                            break;
+
+                        default:
+                            // Все остальные случаи - дружелюбный ответ
+                            await bot.editMessageText(analysisData.response_text, {
+                                chat_id: thinkingMessage.chat.id,
+                                message_id: thinkingMessage.message_id,
+                                parse_mode: 'Markdown'
+                            });
+                            break;
+                    }
+                } else {
+                    await bot.editMessageText('Извините, не смог понять ваше сообщение. Попробуйте использовать основные функции бота через меню.', {
+                        chat_id: thinkingMessage.chat.id,
+                        message_id: thinkingMessage.message_id
+                    });
+                }
+            } catch (error) {
+                console.error("Ошибка при обработке текстового сообщения:", error);
+                await bot.editMessageText('Произошла ошибка при обработке сообщения.', {
+                    chat_id: thinkingMessage.chat.id,
+                    message_id: thinkingMessage.message_id
+                });
+            }
+        }
     });
 
     // --- Callback Query Handler ---
@@ -1259,8 +3026,8 @@ const setupBot = (app) => {
         
         // --- Plan Action Callbacks ---
         if (data.startsWith('workout_action_') || data.startsWith('nutrition_action_')) {
-            await bot.answerCallbackQuery(callbackQuery.id);
-            
+        await bot.answerCallbackQuery(callbackQuery.id);
+
             const [planType, , actionType] = data.split('_');
             
             if (actionType === 'no') {
@@ -1376,11 +3143,20 @@ const setupBot = (app) => {
                         }
 
                         if (planResult.success) {
-                            await bot.editMessageText(`✅ Ваш план ${planTypeName} готов!\n\n${planResult.plan}`, {
-                                chat_id,
-                                message_id: loadingMessage.message_id,
-                                parse_mode: 'Markdown'
-                            });
+                            // Отправляем красивый HTML-документ
+                            const currentDate = new Date().toLocaleDateString('ru-RU').replace(/\./g, '_');
+                            let htmlContent, filename;
+                            
+                            if (planType === 'workout') {
+                                htmlContent = generateWorkoutPlanHTML(planResult.plan, profile, existingData);
+                                filename = `План_тренировок_${profile.first_name}_${currentDate}.html`;
+                            } else {
+                                htmlContent = generateNutritionPlanHTML(planResult.plan, profile, existingData);
+                                filename = `План_питания_${profile.first_name}_${currentDate}.html`;
+                            }
+                            
+                            await bot.deleteMessage(chat_id, loadingMessage.message_id);
+                            await sendPlanAsDocument(chat_id, planType, htmlContent, filename);
                         } else {
                             await bot.editMessageText(`❌ Произошла ошибка при создании плана: ${planResult.error}`, {
                                 chat_id,
@@ -1623,9 +3399,9 @@ const setupBot = (app) => {
                 await bot.editMessageText('🤔 Похоже, эти кнопки устарели. Пожалуйста, попробуйте добавить еду заново.', {
                     chat_id, message_id: msg.message_id, reply_markup: null
                 });
-                return;
-            }
-            
+            return;
+        }
+
             delete mealConfirmationCache[confirmationId];
 
             if (confirmationAction === 'confirm') {
@@ -1991,8 +3767,8 @@ const setupBot = (app) => {
                  // Генерируем план тренировок
                  const loadingMessage = await bot.editMessageText('🤖 Создаю персональный план тренировок... Это может занять до 30 секунд.', {
                      chat_id, message_id: msg.message_id,
-                     reply_markup: null
-                 });
+                    reply_markup: null
+                });
 
                  try {
                      // Сохраняем данные в базу
@@ -2043,11 +3819,13 @@ const setupBot = (app) => {
                      const planResult = await generateWorkoutPlan(state.profileData, state.data);
 
                      if (planResult.success) {
-                         // Отправляем план пользователю
-                         await bot.editMessageText(`✅ Ваш персональный план тренировок готов!\n\n${planResult.plan}`, {
-                             chat_id, message_id: msg.message_id,
-                             parse_mode: 'Markdown'
-                         });
+                         // Отправляем красивый HTML-документ
+                         const currentDate = new Date().toLocaleDateString('ru-RU').replace(/\./g, '_');
+                         const htmlContent = generateWorkoutPlanHTML(planResult.plan, state.profileData, state.data);
+                         const filename = `План_тренировок_${state.profileData.first_name}_${currentDate}.html`;
+                         
+                         await bot.deleteMessage(chat_id, msg.message_id);
+                         await sendPlanAsDocument(chat_id, 'workout', htmlContent, filename);
                      } else {
                          await bot.editMessageText(`❌ Произошла ошибка при создании плана: ${planResult.error}`, {
                              chat_id, message_id: msg.message_id
@@ -2063,7 +3841,7 @@ const setupBot = (app) => {
 
                  // Очищаем состояние
                  delete workoutPlanState[telegram_id];
-             }
+            }
              return;
         }
 
@@ -2087,7 +3865,7 @@ const setupBot = (app) => {
 
                 await bot.editMessageText('Какой у вас тип активности в течение дня?', {
                     chat_id, message_id: msg.message_id,
-                    reply_markup: {
+            reply_markup: {
                         inline_keyboard: [
                             [{ text: '💺 Сидячий образ жизни', callback_data: 'nutrition_activity_sedentary' }],
                             [{ text: '🚶 Лёгкая активность', callback_data: 'nutrition_activity_light' }],
@@ -2183,11 +3961,13 @@ const setupBot = (app) => {
                     const planResult = await generateNutritionPlan(state.profileData, state.data);
 
                     if (planResult.success) {
-                        // Отправляем план пользователю
-                        await bot.editMessageText(`✅ Ваш персональный план питания готов!\n\n${planResult.plan}`, {
-                            chat_id, message_id: msg.message_id,
-                            parse_mode: 'Markdown'
-                        });
+                        // Отправляем красивый HTML-документ
+                        const currentDate = new Date().toLocaleDateString('ru-RU').replace(/\./g, '_');
+                        const htmlContent = generateNutritionPlanHTML(planResult.plan, state.profileData, state.data);
+                        const filename = `План_питания_${state.profileData.first_name}_${currentDate}.html`;
+                        
+                        await bot.deleteMessage(chat_id, msg.message_id);
+                        await sendPlanAsDocument(chat_id, 'nutrition', htmlContent, filename);
                     } else {
                         await bot.editMessageText(`❌ Произошла ошибка при создании плана: ${planResult.error}`, {
                             chat_id, message_id: msg.message_id
@@ -2224,4 +4004,4 @@ cron.schedule('0 21 * * *', () => {
 
 console.log('⏰ Планировщик ежедневных отчетов настроен (каждый день в 21:00 МСК)');
 
-module.exports = { setupBot };
+module.exports = { setupBot }; 
