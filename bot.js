@@ -744,12 +744,17 @@ const addWorkoutRecord = async (telegram_id, workoutData) => {
     try {
         console.log('Adding workout record with data:', workoutData);
         
+        // Преобразуем массив упражнений в строку если это массив
+        const exercisesString = Array.isArray(workoutData.exercises) 
+            ? workoutData.exercises.join(', ') 
+            : workoutData.exercises || '';
+        
         const { data, error } = await supabase
             .from('workout_records')
             .insert({
                 telegram_id,
                 workout_type: workoutData.workout_type,
-                exercises: workoutData.exercises,
+                exercises: exercisesString,
                 duration_minutes: workoutData.duration,
                 intensity: workoutData.intensity,
                 calories_burned: workoutData.calories_burned,
@@ -760,12 +765,14 @@ const addWorkoutRecord = async (telegram_id, workoutData) => {
 
         if (error) {
             console.error('Supabase error details:', error);
+            console.error('Full error object:', JSON.stringify(error, null, 2));
             throw error;
         }
         return { success: true, data };
     } catch (error) {
         console.error('Error adding workout record:', error);
-        return { success: false, error: error.message || error.toString() };
+        console.error('Full error:', JSON.stringify(error, null, 2));
+        return { success: false, error: error.message || JSON.stringify(error) };
     }
 };
 
