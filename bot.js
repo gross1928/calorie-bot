@@ -58,19 +58,19 @@ const streamMessage = async (chat_id, fullText, options = {}) => {
             return await bot.sendMessage(chat_id, fullText, options);
         }
         
-        // Отправляем первый символ с курсором
-        const sentMessage = await bot.sendMessage(chat_id, chars[0] + '▌', options);
+        // Отправляем первый символ с тонким современным курсором
+        const sentMessage = await bot.sendMessage(chat_id, chars[0] + '│', options);
         
         // Постепенно добавляем остальные символы
         let accumulatedText = chars[0];
         
         for (let i = 1; i < chars.length; i++) {
-            // Увеличили скорость в 6 раз: было 800-1400мс между словами, теперь 130-230мс между символами
-            await new Promise(resolve => setTimeout(resolve, 130 + Math.random() * 100));
+            // Увеличили скорость еще в 6 раз: теперь 22-38мс между символами для супер-быстрого эффекта
+            await new Promise(resolve => setTimeout(resolve, 22 + Math.random() * 16));
             accumulatedText += chars[i];
             
             const isLast = i === chars.length - 1;
-            const displayText = isLast ? accumulatedText : accumulatedText + '▌';
+            const displayText = isLast ? accumulatedText : accumulatedText + '│';
             
             try {
                 await bot.editMessageText(displayText, {
@@ -2966,16 +2966,18 @@ const setupBot = (app) => {
         }
 
         if (manualAddStep === 'awaiting_input') {
-                delete manualAddState[telegram_id];
-            bot.sendChatAction(chat_id, 'typing');
-            const thinkingMessage = await bot.sendMessage(chat_id, 'Получил ваш запрос! ✍️ Анализирую с помощью ИИ, это может занять несколько секунд...');
+            delete manualAddState[telegram_id];
+            
+            // СРАЗУ показываем индикатор печатания
+            await bot.sendChatAction(chat_id, 'typing');
+            
             try {
                 const parts = msg.text.split(',').map(p => p.trim());
                 const description = parts[0];
                 const weight = parseInt(parts[1], 10);
                 if (parts.length !== 2 || !description || isNaN(weight) || weight <= 0) {
-                     await bot.editMessageText('Неверный формат. Пожалуйста, введите данные в формате: `Название, Граммы`.\n\nНапример: `Гречка с курицей, 150`', {
-                        chat_id: chat_id, message_id: undefined, parse_mode: 'Markdown'
+                     await bot.sendMessage(chat_id, 'Неверный формат. Пожалуйста, введите данные в формате: `Название, Граммы`.\n\nНапример: `Гречка с курицей, 150`', {
+                        parse_mode: 'Markdown'
                     });
                     return;
                 }
@@ -2992,8 +2994,8 @@ const setupBot = (app) => {
 
                     const responseText = `*${mealData.dish_name}* (Примерно ${mealData.weight_g} г)\n\n*Ингредиенты:* ${ingredientsString}\n*КБЖУ:*\n- Калории: ${mealData.calories} ккал\n- Белки: ${mealData.protein} г\n- Жиры: ${mealData.fat} г\n- Углеводы: ${mealData.carbs} г\n\nСохранить этот приём пищи?`;
 
-                    await bot.editMessageText(responseText, {
-                        chat_id: chat_id, message_id: undefined, parse_mode: 'Markdown',
+                    await bot.sendMessage(chat_id, responseText, {
+                        parse_mode: 'Markdown',
                         reply_markup: {
                             inline_keyboard: [
                                 [{ text: '✅ Да, сохранить', callback_data }, { text: '❌ Нет, отменить', callback_data: cancel_callback_data }]
@@ -3001,15 +3003,11 @@ const setupBot = (app) => {
                         }
                     });
                 } else {
-                     await bot.editMessageText(`😕 ${recognitionResult.reason}`, {
-                        chat_id: chat_id, message_id: undefined
-                    });
+                     await bot.sendMessage(chat_id, `😕 ${recognitionResult.reason}`);
                 }
             } catch (error) {
                 console.error("Ошибка при обработке ручного ввода:", error);
-                await bot.editMessageText('Произошла внутренняя ошибка. Не удалось обработать ваш запрос.', {
-                    chat_id: chat_id, message_id: undefined
-                });
+                await bot.sendMessage(chat_id, 'Произошла внутренняя ошибка. Не удалось обработать ваш запрос.');
             }
             return;
         }
