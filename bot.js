@@ -378,6 +378,105 @@ const formatUserProgramToMarkdown = (program) => {
     return markdown;
 };
 
+const generatePersonalizedWorkoutPlan = async (userProfile, goal, experience) => {
+    try {
+        // Получаем все доступные упражнения из ваших программ
+        const allExercises = [];
+        
+        Object.values(USER_WORKOUT_PROGRAMS).forEach(category => {
+            Object.values(category).forEach(gender => {
+                Object.values(gender).forEach(program => {
+                    if (program.weeks) {
+                        program.weeks.forEach(week => {
+                            week.days.forEach(day => {
+                                allExercises.push(...day.exercises);
+                            });
+                        });
+                    }
+                    if (program.blocks) {
+                        program.blocks.forEach(block => {
+                            block.trainings.forEach(training => {
+                                allExercises.push(...training.exercises);
+                            });
+                        });
+                    }
+                });
+            });
+        });
+
+        // Убираем дубликаты упражнений
+        const uniqueExercises = allExercises.filter((exercise, index, self) => 
+            index === self.findIndex(e => e.name === exercise.name)
+        );
+
+        const prompt = `
+Ты опытный персональный тренер. Составь индивидуальную программу тренировок на основе:
+
+ПРОФИЛЬ ПОЛЬЗОВАТЕЛЯ:
+- Имя: ${userProfile?.name || 'Не указано'}
+- Пол: ${userProfile?.gender || 'Не указано'}
+- Возраст: ${userProfile?.age || 'Не указано'}
+- Вес: ${userProfile?.weight || 'Не указано'} кг
+- Рост: ${userProfile?.height || 'Не указано'} см
+- Цель: ${goal}
+- Уровень опыта: ${experience}
+
+ДОСТУПНЫЕ УПРАЖНЕНИЯ (выбери самые подходящие):
+${uniqueExercises.slice(0, 50).map(ex => `- ${ex.name}: ${ex.sets_reps || ''} ${ex.intensity ? `(${ex.intensity})` : ''}`).join('\n')}
+
+ТРЕБОВАНИЯ:
+1. Составь программу на 3-4 дня в неделю
+2. Учти уровень опыта пользователя
+3. Используй ТОЛЬКО упражнения из предоставленного списка
+4. Укажи количество подходов и повторений
+5. Добавь рекомендации по отдыху между подходами
+6. Структурируй по дням недели
+
+ФОРМАТ ОТВЕТА:
+**ПЕРСОНАЛЬНАЯ ПРОГРАММА ТРЕНИРОВОК**
+
+**День 1 - [Название]**
+- Упражнение: подходы x повторения (отдых)
+- ...
+
+**День 2 - Отдых**
+
+**День 3 - [Название]**
+- Упражнение: подходы x повторения (отдых)
+- ...
+
+**РЕКОМЕНДАЦИИ:**
+- Общие советы по выполнению
+- Прогрессия нагрузки
+- Важные моменты техники
+`;
+
+        const response = await withTimeout(
+            openai.chat.completions.create({
+                model: 'gpt-4o-mini',
+                messages: [
+                    {
+                        role: 'system',
+                        content: 'Ты профессиональный персональный тренер с 15-летним опытом. Создаешь безопасные и эффективные программы тренировок.'
+                    },
+                    {
+                        role: 'user',
+                        content: prompt
+                    }
+                ],
+                max_tokens: 1500,
+                temperature: 0.7
+            }),
+            15000
+        );
+
+        return response.choices[0].message.content;
+    } catch (error) {
+        logEvent('error', 'Error generating personalized workout plan', { error: error.toString() });
+        return 'Извините, не удалось создать персональную программу. Попробуйте позже.';
+    }
+};
+
 // --- Основная логика бота ---
 
 bot.on('message', async (msg) => {
@@ -399,21 +498,17 @@ bot.on('message', async (msg) => {
             if (callbackQuery.data.startsWith('get_workout_plan_')) {
                 const [_, goal, gender, experience] = callbackQuery.data.split('_');
                 
-                // Здесь мы будем использовать USER_WORKOUT_PROGRAMS
-                const programCategory = goal === 'bodybuilding' ? 'bodybuilding' : 'powerlifting_and_strength';
+                // Получаем профиль пользователя
+                const userProfile = await getUserProfile(chatId);
                 
-                if (USER_WORKOUT_PROGRAMS[programCategory] && 
-                    USER_WORKOUT_PROGRAMS[programCategory][gender] &&
-                    USER_WORKOUT_PROGRAMS[programCategory][gender][experience]) {
-                    
-                    const program = USER_WORKOUT_PROGRAMS[programCategory][gender][experience];
-                    
-                    const formattedProgram = formatUserProgramToMarkdown(program);
-                    
-                    await smartSendMessage(chatId, formattedProgram, { parse_mode: 'Markdown' });
-                } else {
-                    await smartSendMessage(chatId, 'К сожалению, подходящая программа не найдена. Попробуйте другие параметры.');
-                }
+                // Показываем индикатор загрузки
+                await showTyping(chatId, 8000);
+                await bot.sendMessage(chatId, '🤖 Анализирую ваш профиль и составляю персональную программу тренировок...');
+                
+                // Генерируем персональную программу с помощью ИИ
+                const personalizedPlan = await generatePersonalizedWorkoutPlan(userProfile, goal, experience);
+                
+                await smartSendMessage(chatId, personalizedPlan, { parse_mode: 'Markdown' });
             }
         }
     } catch (error) {
