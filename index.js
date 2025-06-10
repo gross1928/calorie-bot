@@ -12,8 +12,15 @@ app.get('/', (req, res) => {
     res.send('Calorie Counter Bot is running!');
 });
 
-// Setup the bot and its webhook
-setupBot(app);
+// Setup the bot and its webhook with error handling
+try {
+    console.log('Starting bot setup...');
+    setupBot(app);
+    console.log('Bot setup completed successfully');
+} catch (error) {
+    console.error('Error setting up bot:', error);
+    process.exit(1);
+}
 
 app.listen(port, () => {
     console.log(`Server is listening on port ${port}`);
