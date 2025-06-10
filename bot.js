@@ -13,7 +13,25 @@ if (!token || !openaiApiKey) {
     throw new Error('Telegram Bot Token or OpenAI API Key is not defined in .env file');
 }
 
-const bot = new TelegramBot(token);
+// 🤖 Telegram Bot с улучшенной обработкой ошибок
+const bot = new TelegramBot(token, {
+    polling: {
+        interval: 300,
+        autoStart: true,
+        params: {
+            timeout: 10
+        }
+    }
+});
+
+// Обработка ошибок polling
+bot.on('polling_error', (error) => {
+    logEvent('error', 'Telegram polling error', { 
+        error: error.message,
+        code: error.code 
+    });
+});
+
 const openai = new OpenAI({ apiKey: openaiApiKey });
 
 // === 🛡️ КРИТИЧЕСКИ ВАЖНЫЕ МОДУЛИ ===
@@ -125,6 +143,23 @@ process.on('unhandledRejection', (reason, promise) => {
 
 process.on('uncaughtException', (error) => {
     logEvent('error', 'Uncaught Exception', { error: error.toString(), stack: error.stack });
+});
+
+// 🚀 GRACEFUL SHUTDOWN для Railway
+process.on('SIGTERM', () => {
+    logEvent('info', 'Received SIGTERM, shutting down gracefully');
+    console.log('🔄 Railway перезапускает приложение...');
+    
+    // Даем время завершить текущие операции
+    setTimeout(() => {
+        process.exit(0);
+    }, 5000);
+});
+
+process.on('SIGINT', () => {
+    logEvent('info', 'Received SIGINT, shutting down gracefully');
+    console.log('🛑 Получен сигнал остановки...');
+    process.exit(0);
 });
 
 // 📊 6. HEALTH CHECK ENDPOINT
@@ -3186,11 +3221,18 @@ const setupBot = (app) => {
             // Rate limiting статистика
             const activeUsers = userRateLimits.size;
             
+            // Uptime статистика
+            const uptimeSeconds = process.uptime();
+            const uptimeMinutes = Math.floor(uptimeSeconds / 60);
+            const uptimeHours = Math.floor(uptimeMinutes / 60);
+            
             let statsText = `📊 **Статистика бота**\n\n`;
+            statsText += `⏱️ Uptime: ${uptimeHours}ч ${uptimeMinutes % 60}м\n`;
             statsText += `👥 Всего пользователей: ${usersCount?.length || 0}\n`;
             statsText += `🍽️ Записей о еде сегодня: ${todayMeals?.length || 0}\n`;
             statsText += `⚡ Активных пользователей: ${activeUsers}\n`;
             statsText += `🚫 Rate limit нарушений: ${[...userRateLimits.values()].filter(requests => requests.length >= RATE_LIMIT_MAX_REQUESTS).length}\n`;
+            statsText += `💾 Memory: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)}MB\n`;
             
             bot.sendMessage(chat_id, statsText, { parse_mode: 'Markdown' });
         } catch (error) {
