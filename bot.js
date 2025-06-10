@@ -1092,6 +1092,21 @@ const createWorkoutProgressBar = (completed, planned) => {
 const generateWorkoutPlanHTML = (planContent, profileData, planData) => {
     const currentDate = new Date().toLocaleDateString('ru-RU');
     
+    // Проверяем и нормализуем данные профиля
+    const safeProfileData = {
+        first_name: profileData?.first_name || 'Пользователь',
+        age: profileData?.age || 'Не указан',
+        height_cm: profileData?.height_cm || 'Не указан',
+        weight_kg: profileData?.weight_kg || 'Не указан',
+        goal: profileData?.goal || 'Не указана'
+    };
+    
+    // Проверяем и нормализуем данные плана
+    const safePlanData = {
+        experience: planData?.experience || 'Не указан',
+        frequency_per_week: planData?.frequency_per_week || planData?.frequency || 'Не указана'
+    };
+    
     // Парсим контент плана из Markdown в структурированные данные
     const days = planContent.split('### День').filter(day => day.trim());
     
@@ -1106,27 +1121,45 @@ const generateWorkoutPlanHTML = (planContent, profileData, planData) => {
         let isTable = false;
         
         lines.forEach(line => {
-            if (line.includes('|') && !line.includes('Упражнение')) {
+            // Очищаем строку от лишних символов
+            const cleanLine = line.trim();
+            
+            if (cleanLine.includes('|') && !cleanLine.includes('Упражнение') && !cleanLine.includes('---') && cleanLine.length > 5) {
                 isTable = true;
-                const parts = line.split('|').map(p => p.trim()).filter(p => p);
+                const parts = cleanLine.split('|').map(p => p.trim()).filter(p => p && p !== '---' && p !== '');
                 if (parts.length >= 4) {
+                    const exerciseName = parts[0].replace(/^\|+|\|+$/g, '').trim() || 'Упражнение';
+                    const sets = parts[1].replace(/^\|+|\|+$/g, '').trim() || '-';
+                    const reps = parts[2].replace(/^\|+|\|+$/g, '').trim() || '-';
+                    const rest = parts[3].replace(/^\|+|\|+$/g, '').trim() || '-';
+                    
                     exercises += `
                         <div class="exercise-row">
-                            <span class="exercise-name">${parts[0]}</span>
-                            <span class="exercise-sets">${parts[1]} подходов</span>
-                            <span class="exercise-reps">${parts[2]}</span>
-                            <span class="exercise-rest">${parts[3]}</span>
+                            <span class="exercise-name">${exerciseName}</span>
+                            <span class="exercise-sets">${sets}</span>
+                            <span class="exercise-reps">${reps}</span>
+                            <span class="exercise-rest">${rest}</span>
                         </div>
                     `;
                 }
+            } else if (cleanLine && !cleanLine.includes('|') && !cleanLine.includes('#') && !cleanLine.includes('**') && cleanLine.length > 3) {
+                // Добавляем обычный текст как описание упражнения
+                exercises += `
+                    <div class="exercise-text">
+                        <p>${cleanLine}</p>
+                    </div>
+                `;
             }
         });
         
+        const dayEmojis = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣'];
+        const dayEmoji = dayEmojis[index - 1] || '📅';
+        
         dayCards += `
             <div class="day-card">
-                <h3>День ${index} - ${dayTitle}</h3>
+                <h3>${dayEmoji} День ${index} - ${dayTitle}</h3>
                 <div class="exercises">
-                    ${exercises || '<p class="rest-day">День отдыха 😌</p>'}
+                    ${exercises || '<p class="rest-day">🛌 День отдыха - восстановление организма</p>'}
                 </div>
             </div>
         `;
@@ -1412,6 +1445,29 @@ const generateWorkoutPlanHTML = (planContent, profileData, planData) => {
             text-align: center;
         }
         
+        .exercise-text {
+            margin: 10px 0;
+            padding: 15px 20px;
+            background: var(--primary-green);
+            border-radius: 12px;
+            border-left: 4px solid var(--accent-yellow);
+            transition: all 0.3s ease;
+            animation: fadeIn 0.8s ease-out;
+        }
+        
+        .exercise-text:hover {
+            transform: translateX(5px);
+            background: var(--primary-dark);
+            box-shadow: var(--shadow-light);
+        }
+        
+        .exercise-text p {
+            color: var(--text-light);
+            margin: 0;
+            font-size: 1.05rem;
+            line-height: 1.5;
+        }
+        
         .rest-day {
             text-align: center;
             color: var(--text-muted);
@@ -1571,35 +1627,39 @@ const generateWorkoutPlanHTML = (planContent, profileData, planData) => {
     <div class="container">
         <div class="header">
             <h1>💪 Персональный план тренировок</h1>
-            <p>Создан специально для вас</p>
+            <p>🚀 Создан специально для достижения ваших целей!</p>
         </div>
         
-        <div class="user-info">
-            <h3>Информация о пользователе</h3>
+        <div class="user-info workout-info">
+            <h3>👥 Информация о пользователе</h3>
             <div class="info-grid">
                 <div class="info-item">
-                    <div class="info-label">Имя</div>
-                    <div class="info-value">${profileData.first_name}</div>
+                    <div class="info-label">👤 Имя</div>
+                    <div class="info-value">${safeProfileData.first_name}</div>
                 </div>
                 <div class="info-item">
-                    <div class="info-label">Возраст</div>
-                    <div class="info-value">${profileData.age} лет</div>
+                    <div class="info-label">🎂 Возраст</div>
+                    <div class="info-value">${safeProfileData.age} лет</div>
                 </div>
                 <div class="info-item">
-                    <div class="info-label">Вес</div>
-                    <div class="info-value">${profileData.weight_kg} кг</div>
+                    <div class="info-label">📏 Рост</div>
+                    <div class="info-value">${safeProfileData.height_cm} см</div>
                 </div>
                 <div class="info-item">
-                    <div class="info-label">Цель</div>
-                    <div class="info-value">${profileData.goal}</div>
+                    <div class="info-label">⚖️ Вес</div>
+                    <div class="info-value">${safeProfileData.weight_kg} кг</div>
                 </div>
                 <div class="info-item">
-                    <div class="info-label">Опыт</div>
-                    <div class="info-value">${planData.experience}</div>
+                    <div class="info-label">🎯 Цель</div>
+                    <div class="info-value">${safeProfileData.goal === 'lose_weight' ? 'Похудение' : safeProfileData.goal === 'gain_mass' ? 'Набор массы' : safeProfileData.goal === 'maintain_weight' ? 'Поддержание веса' : safeProfileData.goal}</div>
                 </div>
                 <div class="info-item">
-                    <div class="info-label">Частота</div>
-                    <div class="info-value">${planData.frequency} раз в неделю</div>
+                    <div class="info-label">💪 Опыт</div>
+                    <div class="info-value">${safePlanData.experience === 'beginner' ? 'Новичок' : safePlanData.experience === 'intermediate' ? 'Средний' : safePlanData.experience === 'advanced' ? 'Продвинутый' : safePlanData.experience}</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">📅 Частота</div>
+                    <div class="info-value">${safePlanData.frequency_per_week} раз в неделю</div>
                 </div>
             </div>
         </div>
@@ -1619,8 +1679,9 @@ const generateWorkoutPlanHTML = (planContent, profileData, planData) => {
         </div>
         
         <div class="footer">
-            <p>План создан ${currentDate} | Telegram Bot NutriAI</p>
-            <p style="margin-top: 10px; opacity: 0.8;">Следите за прогрессом и достигайте целей! 🎯</p>
+            <p>📅 План создан ${currentDate} | 🤖 Telegram Bot NutriAI</p>
+            <p style="margin-top: 10px; opacity: 0.8;">✨ Следите за прогрессом и достигайте целей! 🎯</p>
+            <p style="margin-top: 5px; font-size: 0.9rem; opacity: 0.6;">💪 Ваш путь к здоровью начинается сегодня!</p>
         </div>
     </div>
 </body>
@@ -1630,6 +1691,25 @@ const generateWorkoutPlanHTML = (planContent, profileData, planData) => {
 
 const generateNutritionPlanHTML = (planContent, profileData, planData) => {
     const currentDate = new Date().toLocaleDateString('ru-RU');
+    
+    // Проверяем и нормализуем данные профиля
+    const safeProfileData = {
+        first_name: profileData?.first_name || 'Пользователь',
+        age: profileData?.age || 'Не указан',
+        height_cm: profileData?.height_cm || 'Не указан',
+        weight_kg: profileData?.weight_kg || 'Не указан',
+        goal: profileData?.goal || 'Не указана',
+        daily_calories: profileData?.daily_calories || 'Не указано',
+        daily_protein: profileData?.daily_protein || 'Не указано',
+        daily_fat: profileData?.daily_fat || 'Не указано',
+        daily_carbs: profileData?.daily_carbs || 'Не указано'
+    };
+    
+    // Проверяем и нормализуем данные плана
+    const safePlanData = {
+        meals_per_day: planData?.meals_per_day || 'Не указано',
+        mealsCount: planData?.mealsCount || 'Не указано'
+    };
     
     // Парсим план питания
     const sections = planContent.split('##').filter(section => section.trim());
@@ -1647,16 +1727,33 @@ const generateNutritionPlanHTML = (planContent, profileData, planData) => {
                 if (line.includes('**') && (line.includes('Завтрак') || line.includes('Обед') || line.includes('Ужин') || line.includes('Перекус'))) {
                     const mealName = line.replace(/\*\*/g, '').trim();
                     meals += `<h4 class="meal-title">${mealName}</h4>`;
-                } else if (line.trim() && !line.includes('**')) {
+                } else if (line.includes('|') && !line.includes('Блюдо') && !line.includes('---')) {
+                    // Парсим таблицу питания
+                    const parts = line.split('|').map(p => p.trim()).filter(p => p && p !== '---');
+                    if (parts.length >= 4) {
+                        meals += `
+                            <div class="nutrition-row">
+                                <span class="dish-name">${parts[0].replace(/^\|+|\|+$/g, '').trim()}</span>
+                                <span class="dish-details">${parts[1].replace(/^\|+|\|+$/g, '').trim()}</span>
+                                <span class="dish-calories">${parts[2].replace(/^\|+|\|+$/g, '').trim()}</span>
+                                <span class="dish-nutrition">${parts[3].replace(/^\|+|\|+$/g, '').trim()}</span>
+                            </div>
+                        `;
+                    }
+                } else if (line.trim() && !line.includes('**') && !line.includes('|') && line.length > 3) {
                     meals += `<p class="meal-item">${line.trim()}</p>`;
                 }
             });
             
+            const dayNumber = dayTitle.match(/\d+/);
+            const dayEmojis = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣'];
+            const dayEmoji = dayNumber ? dayEmojis[parseInt(dayNumber[0]) - 1] || '📅' : '📅';
+            
             dailyMeals += `
                 <div class="day-card">
-                    <h3>${dayTitle}</h3>
+                    <h3>${dayEmoji} ${dayTitle}</h3>
                     <div class="meals">
-                        ${meals}
+                        ${meals || '<p class="meal-item">🍽️ Меню на этот день будет добавлено позже</p>'}
                     </div>
                 </div>
             `;
@@ -1973,6 +2070,64 @@ const generateNutritionPlanHTML = (planContent, profileData, planData) => {
             color: var(--accent-yellow);
         }
         
+        .nutrition-row {
+            display: grid;
+            grid-template-columns: 2fr 1fr 1fr 1fr;
+            gap: 15px;
+            padding: 15px 20px;
+            background: var(--primary-green);
+            border-radius: 12px;
+            margin-bottom: 10px;
+            border-left: 4px solid var(--accent-yellow);
+            transition: all 0.3s ease;
+            animation: fadeIn 0.8s ease-out;
+        }
+        
+        .nutrition-row:hover {
+            transform: translateX(8px);
+            background: var(--primary-dark);
+            box-shadow: var(--shadow-light);
+        }
+        
+        .dish-name {
+            font-weight: 600;
+            color: var(--text-light);
+            font-size: 1.1rem;
+        }
+        
+        .dish-details {
+            color: #4ecdc4;
+            font-weight: 500;
+            font-family: 'JetBrains Mono', monospace;
+            background: rgba(78, 205, 196, 0.1);
+            padding: 5px 10px;
+            border-radius: 8px;
+            text-align: center;
+            font-size: 0.95rem;
+        }
+        
+        .dish-calories {
+            color: #ff6b6b;
+            font-weight: 500;
+            font-family: 'JetBrains Mono', monospace;
+            background: rgba(255, 107, 107, 0.1);
+            padding: 5px 10px;
+            border-radius: 8px;
+            text-align: center;
+            font-size: 0.95rem;
+        }
+        
+        .dish-nutrition {
+            color: #a78bfa;
+            font-weight: 500;
+            font-family: 'JetBrains Mono', monospace;
+            background: rgba(167, 139, 250, 0.1);
+            padding: 5px 10px;
+            border-radius: 8px;
+            text-align: center;
+            font-size: 0.95rem;
+        }
+        
         .footer {
             background: var(--primary-dark);
             color: var(--text-light);
@@ -2019,6 +2174,17 @@ const generateNutritionPlanHTML = (planContent, profileData, planData) => {
             .meal-item {
                 padding: 12px 15px 12px 40px;
             }
+            
+            .nutrition-row {
+                grid-template-columns: 1fr;
+                gap: 8px;
+                text-align: center;
+            }
+            
+            .nutrition-row span {
+                display: block;
+                margin: 5px 0;
+            }
         }
         
         @media print {
@@ -2052,35 +2218,51 @@ const generateNutritionPlanHTML = (planContent, profileData, planData) => {
     <div class="container">
         <div class="header">
             <h1>🥗 Персональный план питания</h1>
-            <p>Здоровое питание для достижения ваших целей</p>
+            <p>🌟 Здоровое питание для достижения ваших целей!</p>
         </div>
         
-        <div class="user-info">
-            <h3>👤 Информация о пользователе</h3>
+        <div class="user-info nutrition-info">
+            <h3>👥 Информация о пользователе</h3>
             <div class="info-grid">
                 <div class="info-item">
-                    <div class="info-label">Имя</div>
-                    <div class="info-value">${profileData.first_name}</div>
+                    <div class="info-label">👤 Имя</div>
+                    <div class="info-value">${safeProfileData.first_name}</div>
                 </div>
                 <div class="info-item">
-                    <div class="info-label">Цель по калориям</div>
-                    <div class="info-value">${profileData.daily_calories} ккал</div>
+                    <div class="info-label">🎂 Возраст</div>
+                    <div class="info-value">${safeProfileData.age} лет</div>
                 </div>
                 <div class="info-item">
-                    <div class="info-label">Белки</div>
-                    <div class="info-value">${profileData.daily_protein} г</div>
+                    <div class="info-label">📏 Рост</div>
+                    <div class="info-value">${safeProfileData.height_cm} см</div>
                 </div>
                 <div class="info-item">
-                    <div class="info-label">Жиры</div>
-                    <div class="info-value">${profileData.daily_fat} г</div>
+                    <div class="info-label">⚖️ Вес</div>
+                    <div class="info-value">${safeProfileData.weight_kg} кг</div>
                 </div>
                 <div class="info-item">
-                    <div class="info-label">Углеводы</div>
-                    <div class="info-value">${profileData.daily_carbs} г</div>
+                    <div class="info-label">🎯 Цель</div>
+                    <div class="info-value">${safeProfileData.goal === 'lose_weight' ? 'Похудение' : safeProfileData.goal === 'gain_mass' ? 'Набор массы' : safeProfileData.goal === 'maintain_weight' ? 'Поддержание веса' : safeProfileData.goal}</div>
                 </div>
                 <div class="info-item">
-                    <div class="info-label">Приемов пищи</div>
-                    <div class="info-value">${planData.mealsCount}</div>
+                    <div class="info-label">🔥 Калории</div>
+                    <div class="info-value">${safeProfileData.daily_calories} ккал</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">🥩 Белки</div>
+                    <div class="info-value">${safeProfileData.daily_protein} г</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">🥑 Жиры</div>
+                    <div class="info-value">${safeProfileData.daily_fat} г</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">🍞 Углеводы</div>
+                    <div class="info-value">${safeProfileData.daily_carbs} г</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">🍽️ Приемов пищи</div>
+                    <div class="info-value">${safePlanData.meals_per_day === 'three' ? '3 основных' : safePlanData.meals_per_day === 'five' ? '5-6 маленьких' : safePlanData.mealsCount}</div>
                 </div>
             </div>
         </div>
@@ -2088,8 +2270,9 @@ const generateNutritionPlanHTML = (planContent, profileData, planData) => {
         ${dailyMeals}
         
         <div class="footer">
-            <p>План создан ${currentDate} | Telegram Bot NutriAI</p>
-            <p style="margin-top: 10px; opacity: 0.8;">Питайтесь правильно и достигайте целей! 🎯</p>
+            <p>📅 План создан ${currentDate} | 🤖 Telegram Bot NutriAI</p>
+            <p style="margin-top: 10px; opacity: 0.8;">🍽️ Питайтесь правильно и достигайте целей! 🎯</p>
+            <p style="margin-top: 5px; font-size: 0.9rem; opacity: 0.6;">🌱 Здоровое питание - основа вашего успеха!</p>
         </div>
     </div>
 </body>
