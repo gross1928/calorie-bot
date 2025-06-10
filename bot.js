@@ -2959,10 +2959,10 @@ const getCurrentChallenge = async () => {
     }
 };
 
-const addSteps = async (telegram_id, steps) => {
+const addChallengeProgress = async (telegram_id, value) => {
     try {
-        if (!steps || steps <= 0) {
-            return { success: false, error: 'Количество шагов должно быть больше 0' };
+        if (!value || value <= 0) {
+            return { success: false, error: 'Значение должно быть больше 0' };
         }
 
         // Получаем профиль пользователя
@@ -2979,13 +2979,13 @@ const addSteps = async (telegram_id, steps) => {
         const now = new Date();
         const today = now.toISOString().split('T')[0];
 
-        // Добавляем шаги в базу данных
+        // Добавляем прогресс в базу данных (используем поле steps для всех типов)
         const { error } = await supabase
             .from('steps_tracking')
             .upsert({
                 user_id: profile.id,
                 date: today,
-                steps: steps,
+                steps: value,
                 updated_at: new Date().toISOString()
             }, { 
                 onConflict: 'user_id,date',
@@ -2994,14 +2994,17 @@ const addSteps = async (telegram_id, steps) => {
 
         if (error) throw error;
 
-        logEvent('info', 'Steps added', { telegram_id, steps, date: today });
+        logEvent('info', 'Challenge progress added', { telegram_id, value, date: today });
         return { success: true };
 
     } catch (error) {
-        logEvent('error', 'Error adding steps', { telegram_id, steps, error: error.toString() });
-        return { success: false, error: 'Ошибка при добавлении шагов' };
+        logEvent('error', 'Error adding challenge progress', { telegram_id, value, error: error.toString() });
+        return { success: false, error: 'Ошибка при добавлении прогресса' };
     }
 };
+
+// Оставляем старую функцию для обратной совместимости
+const addSteps = addChallengeProgress;
 
 const getStepsStats = async (telegram_id, period = 'week') => {
     try {
@@ -3095,28 +3098,103 @@ const showChallengeMenu = async (chat_id, telegram_id) => {
             challengeText += `🎉 **ПОЗДРАВЛЯЕМ!** Вы выполнили челлендж!\n\n`;
         }
         
-        challengeText += `**Добавьте пройденные сегодня шаги:**`;
+        // Адаптируем интерфейс под тип челленджа
+        let actionText, buttons;
+        
+        if (challenge.type === 'steps') {
+            actionText = `**Добавьте пройденные сегодня шаги:**`;
+            buttons = [
+                [
+                    { text: '1000', callback_data: 'challenge_add_steps_1000' },
+                    { text: '2000', callback_data: 'challenge_add_steps_2000' }
+                ],
+                [
+                    { text: '3000', callback_data: 'challenge_add_steps_3000' },
+                    { text: '5000', callback_data: 'challenge_add_steps_5000' }
+                ],
+                [
+                    { text: '10000', callback_data: 'challenge_add_steps_10000' },
+                    { text: '✏️ Свое число', callback_data: 'challenge_add_custom_steps' }
+                ]
+            ];
+        } else if (challenge.type === 'workout_time' || challenge.unit.includes('минут')) {
+            actionText = `**Добавьте время выполнения сегодня:**`;
+            buttons = [
+                [
+                    { text: '5 мин', callback_data: 'challenge_add_steps_5' },
+                    { text: '10 мин', callback_data: 'challenge_add_steps_10' }
+                ],
+                [
+                    { text: '15 мин', callback_data: 'challenge_add_steps_15' },
+                    { text: '30 мин', callback_data: 'challenge_add_steps_30' }
+                ],
+                [
+                    { text: '60 мин', callback_data: 'challenge_add_steps_60' },
+                    { text: '✏️ Свое число', callback_data: 'challenge_add_custom_steps' }
+                ]
+            ];
+        } else if (challenge.type === 'water' || challenge.unit.includes('литр')) {
+            actionText = `**Добавьте количество воды сегодня:**`;
+            buttons = [
+                [
+                    { text: '0.5 л', callback_data: 'challenge_add_steps_0.5' },
+                    { text: '1 л', callback_data: 'challenge_add_steps_1' }
+                ],
+                [
+                    { text: '1.5 л', callback_data: 'challenge_add_steps_1.5' },
+                    { text: '2 л', callback_data: 'challenge_add_steps_2' }
+                ],
+                [
+                    { text: '3 л', callback_data: 'challenge_add_steps_3' },
+                    { text: '✏️ Свое число', callback_data: 'challenge_add_custom_steps' }
+                ]
+            ];
+        } else if (challenge.type === 'exercises' || challenge.unit.includes('раз')) {
+            actionText = `**Добавьте количество повторений сегодня:**`;
+            buttons = [
+                [
+                    { text: '10 раз', callback_data: 'challenge_add_steps_10' },
+                    { text: '20 раз', callback_data: 'challenge_add_steps_20' }
+                ],
+                [
+                    { text: '50 раз', callback_data: 'challenge_add_steps_50' },
+                    { text: '100 раз', callback_data: 'challenge_add_steps_100' }
+                ],
+                [
+                    { text: '200 раз', callback_data: 'challenge_add_steps_200' },
+                    { text: '✏️ Свое число', callback_data: 'challenge_add_custom_steps' }
+                ]
+            ];
+        } else {
+            // Универсальный интерфейс для других типов
+            actionText = `**Добавьте прогресс сегодня:**`;
+            buttons = [
+                [
+                    { text: '1', callback_data: 'challenge_add_steps_1' },
+                    { text: '5', callback_data: 'challenge_add_steps_5' }
+                ],
+                [
+                    { text: '10', callback_data: 'challenge_add_steps_10' },
+                    { text: '25', callback_data: 'challenge_add_steps_25' }
+                ],
+                [
+                    { text: '50', callback_data: 'challenge_add_steps_50' },
+                    { text: '✏️ Свое число', callback_data: 'challenge_add_custom_steps' }
+                ]
+            ];
+        }
+        
+        challengeText += actionText;
+        
+        // Добавляем кнопку статистики
+        buttons.push([
+            { text: '📊 Статистика за неделю', callback_data: 'challenge_stats' }
+        ]);
 
         bot.sendMessage(chat_id, challengeText, {
             parse_mode: 'Markdown',
             reply_markup: {
-                inline_keyboard: [
-                    [
-                        { text: '1000', callback_data: 'challenge_add_steps_1000' },
-                        { text: '2000', callback_data: 'challenge_add_steps_2000' }
-                    ],
-                    [
-                        { text: '3000', callback_data: 'challenge_add_steps_3000' },
-                        { text: '5000', callback_data: 'challenge_add_steps_5000' }
-                    ],
-                    [
-                        { text: '10000', callback_data: 'challenge_add_steps_10000' },
-                        { text: '✏️ Свое число', callback_data: 'challenge_add_custom_steps' }
-                    ],
-                    [
-                        { text: '📊 Статистика за неделю', callback_data: 'challenge_stats' }
-                    ]
-                ]
+                inline_keyboard: buttons
             }
         });
 
@@ -4266,26 +4344,61 @@ const setupBot = (app) => {
         }
 
         if (isWaitingForSteps) {
-            // Пользователь ввел количество шагов
+            // Пользователь ввел значение для челленджа
             delete challengeStepsState[telegram_id];
 
-            // Валидация ввода шагов
-            const stepsAmount = parseInt(msg.text);
-            if (isNaN(stepsAmount) || stepsAmount <= 0 || stepsAmount > 100000) {
-                bot.sendMessage(chat_id, '❌ Пожалуйста, введите корректное количество шагов от 1 до 100,000.');
+            // Получаем текущий челлендж для определения типа валидации
+            const challengeResult = await getCurrentChallenge();
+            
+            // Валидация ввода значения
+            const progressValue = parseFloat(msg.text.replace(',', '.'));
+            if (isNaN(progressValue) || progressValue <= 0) {
+                bot.sendMessage(chat_id, '❌ Пожалуйста, введите корректное положительное число.');
                 return;
             }
 
-            const result = await addSteps(telegram_id, stepsAmount);
+            // Дополнительная валидация в зависимости от типа челленджа
+            if (challengeResult.success) {
+                const challenge = challengeResult.data;
+                if (challenge.type === 'steps' && progressValue > 100000) {
+                    bot.sendMessage(chat_id, '❌ Количество шагов не может быть больше 100,000.');
+                    return;
+                } else if ((challenge.type === 'workout_time' || challenge.unit.includes('минут')) && progressValue > 1440) {
+                    bot.sendMessage(chat_id, '❌ Время тренировки не может быть больше 1440 минут (24 часа).');
+                    return;
+                } else if ((challenge.type === 'water' || challenge.unit.includes('литр')) && progressValue > 20) {
+                    bot.sendMessage(chat_id, '❌ Количество воды не может быть больше 20 литров.');
+                    return;
+                }
+            }
+
+            const result = await addChallengeProgress(telegram_id, progressValue);
             if (result.success) {
-                await bot.sendMessage(chat_id, `✅ Добавлено ${stepsAmount.toLocaleString()} шагов!\n\nОбновляю ваш прогресс...`);
+                // Определяем правильное сообщение успеха
+                let successMessage = `✅ Добавлено ${progressValue}`;
+                if (challengeResult.success) {
+                    const challenge = challengeResult.data;
+                    if (challenge.type === 'steps') {
+                        successMessage = `✅ Добавлено ${progressValue.toLocaleString()} шагов!`;
+                    } else if (challenge.type === 'workout_time' || challenge.unit.includes('минут')) {
+                        successMessage = `✅ Добавлено ${progressValue} минут тренировки!`;
+                    } else if (challenge.type === 'water' || challenge.unit.includes('литр')) {
+                        successMessage = `✅ Добавлено ${progressValue} л воды!`;
+                    } else if (challenge.type === 'exercises' || challenge.unit.includes('раз')) {
+                        successMessage = `✅ Добавлено ${progressValue} повторений!`;
+                    } else {
+                        successMessage = `✅ Добавлено ${progressValue} ${challenge.unit}!`;
+                    }
+                }
+                
+                await bot.sendMessage(chat_id, `${successMessage}\n\nОбновляю ваш прогресс...`);
                 
                 // Показываем обновленное меню через 2 секунды
                 setTimeout(() => {
                     showChallengeMenu(chat_id, telegram_id);
                 }, 2000);
             } else {
-                bot.sendMessage(chat_id, `❌ Ошибка при добавлении шагов: ${result.error}`);
+                bot.sendMessage(chat_id, `❌ Ошибка при добавлении прогресса: ${result.error}`);
             }
             return;
         }
@@ -4908,12 +5021,33 @@ const setupBot = (app) => {
             await bot.answerCallbackQuery(callbackQuery.id);
             
             if (data.startsWith('challenge_add_steps_')) {
-                // Добавление определенного количества шагов
-                const stepsAmount = parseInt(data.split('_')[3]);
-                const result = await addSteps(telegram_id, stepsAmount);
+                // Добавление определенного количества прогресса
+                const valueString = data.split('_')[3];
+                const progressValue = parseFloat(valueString);
+                
+                // Получаем текущий челлендж чтобы определить тип
+                const challengeResult = await getCurrentChallenge();
+                let successMessage = `✅ Добавлено ${progressValue}`;
+                
+                if (challengeResult.success) {
+                    const challenge = challengeResult.data;
+                    if (challenge.type === 'steps') {
+                        successMessage = `✅ Добавлено ${progressValue} шагов!`;
+                    } else if (challenge.type === 'workout_time' || challenge.unit.includes('минут')) {
+                        successMessage = `✅ Добавлено ${progressValue} минут тренировки!`;
+                    } else if (challenge.type === 'water' || challenge.unit.includes('литр')) {
+                        successMessage = `✅ Добавлено ${progressValue} л воды!`;
+                    } else if (challenge.type === 'exercises' || challenge.unit.includes('раз')) {
+                        successMessage = `✅ Добавлено ${progressValue} повторений!`;
+                    } else {
+                        successMessage = `✅ Добавлено ${progressValue} ${challenge.unit}!`;
+                    }
+                }
+                
+                const result = await addChallengeProgress(telegram_id, progressValue);
                 
                 if (result.success) {
-                    await bot.editMessageText(`✅ Добавлено ${stepsAmount} шагов!\n\nОбновляю ваш прогресс...`, {
+                    await bot.editMessageText(`${successMessage}\n\nОбновляю ваш прогресс...`, {
                         chat_id, message_id: msg.message_id
                     });
                     
@@ -4922,15 +5056,33 @@ const setupBot = (app) => {
                         showChallengeMenu(chat_id, telegram_id);
                     }, 2000);
                 } else {
-                    await bot.editMessageText(`❌ Ошибка при добавлении шагов: ${result.error}`, {
+                    await bot.editMessageText(`❌ Ошибка при добавлении прогресса: ${result.error}`, {
                         chat_id, message_id: msg.message_id
                     });
                 }
                 
             } else if (data === 'challenge_add_custom_steps') {
-                // Ввод произвольного количества шагов
+                // Ввод произвольного количества прогресса
+                const challengeResult = await getCurrentChallenge();
+                let inputPrompt = 'Введите значение:';
+                
+                if (challengeResult.success) {
+                    const challenge = challengeResult.data;
+                    if (challenge.type === 'steps') {
+                        inputPrompt = 'Введите количество пройденных шагов:\n\n(например: 7500)';
+                    } else if (challenge.type === 'workout_time' || challenge.unit.includes('минут')) {
+                        inputPrompt = 'Введите время тренировки в минутах:\n\n(например: 45)';
+                    } else if (challenge.type === 'water' || challenge.unit.includes('литр')) {
+                        inputPrompt = 'Введите количество воды в литрах:\n\n(например: 2.5)';
+                    } else if (challenge.type === 'exercises' || challenge.unit.includes('раз')) {
+                        inputPrompt = 'Введите количество повторений:\n\n(например: 150)';
+                    } else {
+                        inputPrompt = `Введите значение в ${challenge.unit}:\n\n(например: 25)`;
+                    }
+                }
+                
                 challengeStepsState[telegram_id] = { waiting: true };
-                await bot.editMessageText('Введите количество пройденных шагов:\n\n(например: 7500)', {
+                await bot.editMessageText(inputPrompt, {
                     chat_id, message_id: msg.message_id,
                     reply_markup: null
                 });
@@ -4964,10 +5116,24 @@ const setupBot = (app) => {
                         const currentDay = new Date(weekStart);
                         currentDay.setDate(weekStart.getDate() + i);
                         const dateString = currentDay.toISOString().split('T')[0];
-                        const daySteps = stepsStats.byDate[dateString] || 0;
+                        const dayProgress = stepsStats.byDate[dateString] || 0;
                         const isToday = dateString === today.toISOString().split('T')[0];
                         
-                        statsText += `${dayNames[i]}: ${daySteps.toLocaleString()} шагов ${isToday ? '👈' : ''}\n`;
+                        // Форматируем значение в зависимости от типа челленджа
+                        let dayText;
+                        if (challenge.type === 'steps') {
+                            dayText = `${dayProgress.toLocaleString()} шагов`;
+                        } else if (challenge.type === 'workout_time' || challenge.unit.includes('минут')) {
+                            dayText = `${dayProgress} минут`;
+                        } else if (challenge.type === 'water' || challenge.unit.includes('литр')) {
+                            dayText = `${dayProgress} л`;
+                        } else if (challenge.type === 'exercises' || challenge.unit.includes('раз')) {
+                            dayText = `${dayProgress} раз`;
+                        } else {
+                            dayText = `${dayProgress} ${challenge.unit}`;
+                        }
+                        
+                        statsText += `${dayNames[i]}: ${dayText} ${isToday ? '👈' : ''}\n`;
                     }
                     
                     if (progress >= 100) {
@@ -4976,9 +5142,29 @@ const setupBot = (app) => {
                         const remaining = challenge.target_value - totalSteps;
                         const daysLeft = 7 - ((today.getDay() + 6) % 7);
                         const avgNeeded = daysLeft > 0 ? Math.ceil(remaining / daysLeft) : remaining;
-                        statsText += `\n💪 Осталось: ${remaining.toLocaleString()} шагов`;
+                        
+                        // Форматируем остаток в зависимости от типа челленджа
+                        let remainingText, avgText;
+                        if (challenge.type === 'steps') {
+                            remainingText = `${remaining.toLocaleString()} шагов`;
+                            avgText = `${avgNeeded.toLocaleString()} шагов/день`;
+                        } else if (challenge.type === 'workout_time' || challenge.unit.includes('минут')) {
+                            remainingText = `${remaining} минут`;
+                            avgText = `${avgNeeded} минут/день`;
+                        } else if (challenge.type === 'water' || challenge.unit.includes('литр')) {
+                            remainingText = `${remaining} л`;
+                            avgText = `${avgNeeded} л/день`;  
+                        } else if (challenge.type === 'exercises' || challenge.unit.includes('раз')) {
+                            remainingText = `${remaining} раз`;
+                            avgText = `${avgNeeded} раз/день`;
+                        } else {
+                            remainingText = `${remaining} ${challenge.unit}`;
+                            avgText = `${avgNeeded} ${challenge.unit}/день`;
+                        }
+                        
+                        statsText += `\n💪 Осталось: ${remainingText}`;
                         if (daysLeft > 0) {
-                            statsText += `\n📍 В среднем ${avgNeeded.toLocaleString()} шагов/день`;
+                            statsText += `\n📍 В среднем ${avgText}`;
                         }
                     }
                     
