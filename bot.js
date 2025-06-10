@@ -372,15 +372,16 @@ const calculateAndSaveNorms = async (profile) => {
             bmr = 447.593 + (9.247 * parseFloat(weight_kg)) + (3.098 * height_cm) - (4.330 * age);
         }
 
-        const activityFactor = 1.2;
+        // 🔥 Улучшенный расчет калорий с правильными коэффициентами
+        const activityFactor = 1.4; // Повышен с 1.2 до 1.4 (легкая активность)
         let daily_calories = bmr * activityFactor;
 
         switch (goal) {
             case 'lose_weight':
-                daily_calories *= 0.85; // 15% deficit
+                daily_calories *= 0.80; // 20% дефицит для эффективного похудения
                 break;
             case 'gain_mass':
-                daily_calories *= 1.15; // 15% surplus
+                daily_calories *= 1.25; // 25% избыток для набора массы (было 15%)
                 break;
         }
 
@@ -2724,7 +2725,7 @@ const showProfileMenu = async (chat_id, telegram_id) => {
         
         // Проверяем наличие дополнительных полей
         if (profile.target_weight_kg) {
-            profileText += `🎯 Целевой вес: ${profile.target_weight_kg} кг\n`;
+            profileText += `🏆 Целевой вес: ${profile.target_weight_kg} кг\n`;
         }
         
         if (profile.timeframe_months) {
@@ -2754,7 +2755,7 @@ const showProfileMenu = async (chat_id, telegram_id) => {
                         { text: '⚖️ Вес', callback_data: 'profile_edit_weight' }
                     ],
                     [
-                        { text: '🎯 Целевой вес', callback_data: 'profile_edit_target_weight' },
+                        { text: '🏆 Целевой вес', callback_data: 'profile_edit_target_weight' },
                         { text: '⏱️ Срок', callback_data: 'profile_edit_timeframe' }
                     ],
                     [
