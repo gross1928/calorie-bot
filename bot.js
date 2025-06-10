@@ -16,13 +16,7 @@ if (!token || !openaiApiKey) {
 
 // 🤖 Telegram Bot с улучшенной обработкой ошибок
 const bot = new TelegramBot(token, {
-    polling: {
-        interval: 300,
-        autoStart: true,
-        params: {
-            timeout: 10
-        }
-    }
+    polling: false // Отключаем автозапуск, контролируется setupBot()
 });
 
 // Обработка ошибок polling
@@ -1346,3 +1340,57 @@ bot.on('message', async (msg) => {
         });
     }
 });
+
+// 🚀 ФУНКЦИЯ НАСТРОЙКИ БОТА ДЛЯ ЭКСПОРТА
+const setupBot = (app) => {
+    // Настройка webhook для продакшена (Railway)
+    if (process.env.NODE_ENV === 'production') {
+        const webhookUrl = `${process.env.RAILWAY_STATIC_URL}/webhook/${process.env.TELEGRAM_BOT_TOKEN}`;
+        
+        // Устанавливаем webhook
+        bot.setWebHook(webhookUrl).then(() => {
+            logEvent('info', 'Webhook set successfully', { webhookUrl });
+        }).catch((error) => {
+            logEvent('error', 'Failed to set webhook', { error: error.toString() });
+        });
+        
+        // Обработчик webhook
+        app.post(`/webhook/${process.env.TELEGRAM_BOT_TOKEN}`, (req, res) => {
+            bot.processUpdate(req.body);
+            res.sendStatus(200);
+        });
+        
+        logEvent('info', 'Bot configured for production with webhook');
+    } else {
+        // Режим разработки - polling
+        bot.startPolling({
+            interval: 300,
+            params: {
+                timeout: 10
+            }
+        }).then(() => {
+            logEvent('info', 'Bot started with polling');
+        }).catch((error) => {
+            logEvent('error', 'Failed to start polling', { error: error.toString() });
+        });
+        
+        logEvent('info', 'Bot configured for development with polling');
+    }
+    
+    // Запускаем автоматическую очистку кэша каждые 2 часа
+    setInterval(cleanExpiredCache, 2 * 60 * 60 * 1000);
+    
+    // Запускаем cron job для еженедельной аналитики веса (каждое воскресенье в 10:00 МСК)
+    cron.schedule('0 10 * * 0', async () => {
+        await sendWeeklyWeightChecksToAll();
+    }, {
+        timezone: "Europe/Moscow"
+    });
+    
+    logEvent('info', 'Bot setup completed successfully');
+};
+
+// 📦 ЭКСПОРТ МОДУЛЯ
+module.exports = {
+    setupBot
+};
