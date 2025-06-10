@@ -16,6 +16,152 @@ if (!token || !openaiApiKey) {
 const bot = new TelegramBot(token);
 const openai = new OpenAI({ apiKey: openaiApiKey });
 
+// === 🛡️ КРИТИЧЕСКИ ВАЖНЫЕ МОДУЛИ ===
+
+// 🚨 1. ERROR HANDLING & STABILITY
+const withErrorHandling = async (apiCall, fallbackMessage = 'Сервис временно недоступен. Попробуйте позже.') => {
+    try {
+        return await apiCall();
+    } catch (error) {
+        console.error('API Error:', error);
+        return { success: false, error: fallbackMessage, details: error.message };
+    }
+};
+
+const withTimeout = (promise, timeoutMs = 30000) => {
+    return Promise.race([
+        promise,
+        new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Request timeout')), timeoutMs)
+        )
+    ]);
+};
+
+// 🚫 2. RATE LIMITING (Anti-spam protection)
+const userRateLimits = new Map();
+const RATE_LIMIT_WINDOW = 60 * 1000; // 1 минута
+const RATE_LIMIT_MAX_REQUESTS = 30; // 30 запросов в минуту
+
+const checkRateLimit = (userId) => {
+    const now = Date.now();
+    const userRequests = userRateLimits.get(userId) || [];
+    
+    // Удаляем старые запросы
+    const recentRequests = userRequests.filter(timestamp => now - timestamp < RATE_LIMIT_WINDOW);
+    
+    if (recentRequests.length >= RATE_LIMIT_MAX_REQUESTS) {
+        return false; // Превышен лимит
+    }
+    
+    recentRequests.push(now);
+    userRateLimits.set(userId, recentRequests);
+    return true; // Можно продолжать
+};
+
+// ✅ 3. DATA VALIDATION
+const validateUserInput = {
+    weight: (value) => {
+        const num = parseFloat(value);
+        return !isNaN(num) && num > 0 && num < 300;
+    },
+    height: (value) => {
+        const num = parseInt(value);
+        return !isNaN(num) && num > 100 && num < 250;
+    },
+    age: (value) => {
+        const num = parseInt(value);
+        return !isNaN(num) && num > 0 && num < 120;
+    },
+    waterAmount: (value) => {
+        const num = parseInt(value);
+        return !isNaN(num) && num > 0 && num < 5000;
+    },
+    calories: (value) => {
+        const num = parseInt(value);
+        return !isNaN(num) && num > 0 && num < 10000;
+    },
+    name: (value) => {
+        return typeof value === 'string' && value.length >= 2 && value.length <= 50 && /^[a-zA-Zа-яА-ЯёЁ\s-]+$/.test(value);
+    }
+};
+
+// 📝 4. LOGGING SYSTEM
+const logEvent = (level, message, meta = {}) => {
+    const timestamp = new Date().toISOString();
+    const logEntry = {
+        timestamp,
+        level,
+        message,
+        ...meta
+    };
+    
+    console.log(`[${timestamp}] ${level.toUpperCase()}: ${message}`, meta);
+    
+    // В продакшене здесь можно добавить отправку в файл или внешний сервис логирования
+};
+
+// 🗄️ 5. DATABASE ERROR HANDLING
+const withDatabaseErrorHandling = async (operation, fallbackMessage = 'Ошибка базы данных. Попробуйте позже.') => {
+    try {
+        const result = await operation();
+        if (result.error) {
+            logEvent('error', 'Database operation failed', { 
+                error: result.error.message, 
+                code: result.error.code 
+            });
+            return { success: false, error: fallbackMessage, details: result.error };
+        }
+        return { success: true, data: result.data };
+    } catch (error) {
+        logEvent('error', 'Database exception', { error: error.toString() });
+        return { success: false, error: fallbackMessage, details: error };
+    }
+};
+
+// Обработка необработанных ошибок
+process.on('unhandledRejection', (reason, promise) => {
+    logEvent('error', 'Unhandled Rejection', { reason: reason.toString(), promise });
+});
+
+process.on('uncaughtException', (error) => {
+    logEvent('error', 'Uncaught Exception', { error: error.toString(), stack: error.stack });
+});
+
+// 📊 6. HEALTH CHECK ENDPOINT
+const performHealthCheck = async () => {
+    const healthStatus = {
+        timestamp: new Date().toISOString(),
+        status: 'healthy',
+        services: {}
+    };
+
+    // Проверка OpenAI
+    try {
+        await withTimeout(openai.chat.completions.create({
+            model: 'gpt-4o-mini',
+            messages: [{ role: 'user', content: 'test' }],
+            max_tokens: 1
+        }), 5000);
+        healthStatus.services.openai = 'healthy';
+    } catch (error) {
+        healthStatus.services.openai = 'unhealthy';
+        healthStatus.status = 'degraded';
+    }
+
+    // Проверка Supabase
+    try {
+        const { error } = await supabase.from('profiles').select('count').limit(1);
+        healthStatus.services.database = error ? 'unhealthy' : 'healthy';
+        if (error) healthStatus.status = 'degraded';
+    } catch (error) {
+        healthStatus.services.database = 'unhealthy';
+        healthStatus.status = 'degraded';
+    }
+
+    logEvent('info', 'Health check completed', healthStatus);
+    return healthStatus;
+};
+
 // In-memory states
 const registrationState = {};
 const manualAddState = {};
@@ -227,9 +373,10 @@ const calculateAndSaveNorms = async (profile) => {
 };
 
 const recognizeFoodFromText = async (inputText) => {
-    console.log(`Sending text to OpenAI for recognition: "${inputText}"`);
-    try {
-        const response = await openai.chat.completions.create({
+    logEvent('info', 'Food text recognition started', { inputLength: inputText.length });
+    
+    return withErrorHandling(async () => {
+        const response = await withTimeout(openai.chat.completions.create({
             model: 'gpt-4o',
             messages: [
                 {
@@ -252,28 +399,31 @@ const recognizeFoodFromText = async (inputText) => {
                 },
             ],
             max_tokens: 500,
-        });
+        }), 15000);
 
         const content = response.choices[0].message.content;
         const jsonString = content.replace(/```json/g, '').replace(/```/g, '').trim();
         const parsedContent = JSON.parse(jsonString);
 
         if (parsedContent.dish_name === 'не еда') {
+            logEvent('warn', 'Non-food text detected', { input: inputText });
             return { success: false, reason: 'Не удалось распознать еду в вашем описании.' };
         }
 
+        logEvent('info', 'Food text recognition successful', { 
+            dish: parsedContent.dish_name, 
+            calories: parsedContent.calories 
+        });
         return { success: true, data: parsedContent };
 
-    } catch (error) {
-        console.error('Error with OpenAI API (text recognition):', error);
-        return { success: false, reason: 'Произошла ошибка при анализе вашего описания.' };
-    }
+    }, 'Произошла ошибка при анализе вашего описания. Попробуйте еще раз.');
 };
 
 const recognizeFoodFromPhoto = async (photoUrl) => {
-    console.log('Sending image to OpenAI for recognition...');
-    try {
-        const response = await openai.chat.completions.create({
+    logEvent('info', 'Food photo recognition started', { photoUrl });
+    
+    return withErrorHandling(async () => {
+        const response = await withTimeout(openai.chat.completions.create({
             model: 'gpt-4o',
             messages: [
                 {
@@ -304,22 +454,24 @@ const recognizeFoodFromPhoto = async (photoUrl) => {
                 },
             ],
             max_tokens: 500,
-        });
+        }), 20000);
 
         const content = response.choices[0].message.content;
         const jsonString = content.replace(/```json/g, '').replace(/```/g, '').trim();
         const parsedContent = JSON.parse(jsonString);
 
         if (parsedContent.dish_name === 'не еда') {
+            logEvent('warn', 'Non-food photo detected', { photoUrl });
             return { success: false, reason: 'На фото не удалось распознать еду.' };
         }
 
+        logEvent('info', 'Food photo recognition successful', { 
+            dish: parsedContent.dish_name, 
+            calories: parsedContent.calories 
+        });
         return { success: true, data: parsedContent };
 
-    } catch (error) {
-        console.error('Error with OpenAI API:', error);
-        return { success: false, reason: 'Произошла ошибка при анализе изображения.' };
-    }
+    }, 'Произошла ошибка при анализе изображения. Попробуйте еще раз.');
 };
 
 const generateWorkoutPlan = async (profileData, additionalData) => {
@@ -2981,12 +3133,93 @@ const setupBot = (app) => {
         }
     });
 
+    // 🔧 КОМАНДЫ АДМИНИСТРАТОРА
+    const ADMIN_IDS = [123456789]; // ЗАМЕНИТЕ НА ВАШ TELEGRAM_ID!
+    
+    bot.onText(/\/admin_health/, async (msg) => {
+        const telegram_id = msg.from.id;
+        const chat_id = msg.chat.id;
+        
+        if (!ADMIN_IDS.includes(telegram_id)) {
+            bot.sendMessage(chat_id, '❌ У вас нет прав для выполнения этой команды.');
+            return;
+        }
+        
+        bot.sendMessage(chat_id, '🔍 Проверяю состояние системы...');
+        const healthStatus = await performHealthCheck();
+        
+        let statusText = `🏥 **Состояние системы**\n\n`;
+        statusText += `⏰ Время: ${healthStatus.timestamp}\n`;
+        statusText += `📊 Общий статус: ${healthStatus.status === 'healthy' ? '✅ Здоров' : '⚠️ Проблемы'}\n\n`;
+        statusText += `**Сервисы:**\n`;
+        statusText += `🤖 OpenAI: ${healthStatus.services.openai === 'healthy' ? '✅' : '❌'}\n`;
+        statusText += `🗄️ База данных: ${healthStatus.services.database === 'healthy' ? '✅' : '❌'}\n`;
+        
+        bot.sendMessage(chat_id, statusText, { parse_mode: 'Markdown' });
+    });
+
+    bot.onText(/\/admin_stats/, async (msg) => {
+        const telegram_id = msg.from.id;
+        const chat_id = msg.chat.id;
+        
+        if (!ADMIN_IDS.includes(telegram_id)) {
+            bot.sendMessage(chat_id, '❌ У вас нет прав для выполнения этой команды.');
+            return;
+        }
+        
+        bot.sendMessage(chat_id, '📈 Собираю статистику...');
+        
+        try {
+            // Статистика пользователей
+            const { data: usersCount } = await supabase
+                .from('profiles')
+                .select('count');
+            
+            // Статистика за сегодня
+            const today = new Date().toISOString().split('T')[0];
+            const { data: todayMeals } = await supabase
+                .from('meals')
+                .select('count')
+                .gte('eaten_at', `${today}T00:00:00`)
+                .lte('eaten_at', `${today}T23:59:59`);
+            
+            // Rate limiting статистика
+            const activeUsers = userRateLimits.size;
+            
+            let statsText = `📊 **Статистика бота**\n\n`;
+            statsText += `👥 Всего пользователей: ${usersCount?.length || 0}\n`;
+            statsText += `🍽️ Записей о еде сегодня: ${todayMeals?.length || 0}\n`;
+            statsText += `⚡ Активных пользователей: ${activeUsers}\n`;
+            statsText += `🚫 Rate limit нарушений: ${[...userRateLimits.values()].filter(requests => requests.length >= RATE_LIMIT_MAX_REQUESTS).length}\n`;
+            
+            bot.sendMessage(chat_id, statsText, { parse_mode: 'Markdown' });
+        } catch (error) {
+            bot.sendMessage(chat_id, '❌ Ошибка при получении статистики.');
+            logEvent('error', 'Admin stats error', { error: error.toString() });
+        }
+    });
+
     // --- Message Handler ---
     bot.on('message', async (msg) => {
         if (msg.text && msg.text.startsWith('/')) return;
 
         const telegram_id = msg.from.id;
         const chat_id = msg.chat.id;
+
+        // 🚫 ПРОВЕРКА RATE LIMITING
+        if (!checkRateLimit(telegram_id)) {
+            logEvent('warn', 'Rate limit exceeded', { userId: telegram_id, chat_id });
+            await bot.sendMessage(chat_id, '⚠️ Слишком много запросов! Подождите минуту перед следующим сообщением.');
+            return;
+        }
+
+        // 📝 ЛОГИРОВАНИЕ АКТИВНОСТИ
+        logEvent('info', 'Message received', { 
+            userId: telegram_id, 
+            chat_id, 
+            messageType: msg.photo ? 'photo' : msg.voice ? 'voice' : 'text',
+            textLength: msg.text ? msg.text.length : 0
+        });
 
         // --- Keyboard Button Handling ---
         if (msg.text === '📸 Добавить по фото') {
@@ -3526,11 +3759,13 @@ const setupBot = (app) => {
             // Пользователь ввел количество воды
             delete waterInputState[telegram_id];
 
-            const amount = parseInt(msg.text);
-            if (isNaN(amount) || amount <= 0 || amount > 5000) {
+            // ✅ ВАЛИДАЦИЯ ВОДЫ
+            if (!validateUserInput.waterAmount(msg.text)) {
+                logEvent('warn', 'Invalid water amount input', { userId: telegram_id, input: msg.text });
                 bot.sendMessage(chat_id, '❌ Пожалуйста, введите корректное количество воды от 1 до 5000 мл.');
                 return;
             }
+            const amount = parseInt(msg.text);
 
             const result = await addWaterIntake(telegram_id, amount);
             if (result.success) {
@@ -3727,13 +3962,22 @@ const setupBot = (app) => {
                 case 'ask_name':
                     const { data: existingProfile } = await supabase.from('profiles').select('telegram_id').eq('telegram_id', telegram_id).single();
                     if (existingProfile) {
-                        console.warn(`User ${telegram_id} already exists but tried to register again. Aborting.`);
+                        logEvent('warn', 'Duplicate registration attempt', { userId: telegram_id });
                         delete registrationState[telegram_id];
                         showMainMenu(chat_id, 'Кажется, ты уже зарегистрирован. Вот твое главное меню:');
                         return;
                     }
-                    state.data.first_name = msg.text;
+                    
+                    // ✅ ВАЛИДАЦИЯ ИМЕНИ
+                    if (!validateUserInput.name(msg.text)) {
+                        bot.sendMessage(chat_id, '❌ Имя должно содержать только буквы и быть от 2 до 50 символов. Попробуйте еще раз.');
+                        return;
+                    }
+                    
+                    state.data.first_name = msg.text.trim();
                     state.step = 'ask_gender';
+                    logEvent('info', 'Registration name validated', { userId: telegram_id, name: msg.text.trim() });
+                    
                     bot.sendMessage(chat_id, 'Приятно познакомиться! Теперь выбери свой пол:', {
                         reply_markup: {
                             inline_keyboard: [
@@ -3744,30 +3988,39 @@ const setupBot = (app) => {
                     });
                     break;
                 case 'ask_age':
-                    const age = parseInt(msg.text, 10);
-                    if (isNaN(age) || age < 10 || age > 100) {
-                        bot.sendMessage(chat_id, 'Пожалуйста, введи корректный возраст (от 10 до 100).'); return;
+                    // ✅ ВАЛИДАЦИЯ ВОЗРАСТА
+                    if (!validateUserInput.age(msg.text)) {
+                        bot.sendMessage(chat_id, '❌ Пожалуйста, введите корректный возраст (от 1 до 120 лет).'); 
+                        return;
                     }
+                    const age = parseInt(msg.text, 10);
                     state.data.age = age;
                     state.step = 'ask_height';
+                    logEvent('info', 'Registration age validated', { userId: telegram_id, age });
                     bot.sendMessage(chat_id, 'Понял. Какой у тебя рост в сантиметрах?');
                     break;
                 case 'ask_height':
-                    const height = parseInt(msg.text, 10);
-                    if (isNaN(height) || height < 100 || height > 250) {
-                        bot.sendMessage(chat_id, 'Пожалуйста, введи корректный рост (от 100 до 250 см).'); return;
+                    // ✅ ВАЛИДАЦИЯ РОСТА
+                    if (!validateUserInput.height(msg.text)) {
+                        bot.sendMessage(chat_id, '❌ Пожалуйста, введите корректный рост (от 100 до 250 см).'); 
+                        return;
                     }
+                    const height = parseInt(msg.text, 10);
                     state.data.height_cm = height;
                     state.step = 'ask_weight';
+                    logEvent('info', 'Registration height validated', { userId: telegram_id, height });
                     bot.sendMessage(chat_id, 'И вес в килограммах? (Можно дробное число, например, 65.5)');
                     break;
                 case 'ask_weight':
-                    const weight = parseFloat(msg.text.replace(',', '.'));
-                     if (isNaN(weight) || weight <= 20 || weight > 300) {
-                         bot.sendMessage(chat_id, 'Пожалуйста, введи корректный вес (например, 75.5).'); return;
+                    // ✅ ВАЛИДАЦИЯ ВЕСА
+                    if (!validateUserInput.weight(msg.text.replace(',', '.'))) {
+                        bot.sendMessage(chat_id, '❌ Пожалуйста, введите корректный вес (от 1 до 300 кг, например: 75.5).'); 
+                        return;
                     }
+                    const weight = parseFloat(msg.text.replace(',', '.'));
                     state.data.weight_kg = weight;
                     state.step = 'ask_goal';
+                    logEvent('info', 'Registration weight validated', { userId: telegram_id, weight });
                     bot.sendMessage(chat_id, 'И последнее: какая у тебя цель?', {
                         reply_markup: {
                             inline_keyboard: [
@@ -5414,15 +5667,60 @@ const setupBot = (app) => {
 
 // --- Daily Reports Cron Job ---
 // Запускаем ежедневные отчеты каждый день в 21:00 (по московскому времени)
-// Cron pattern: '0 21 * * *' = каждый день в 21:00
 cron.schedule('0 21 * * *', () => {
-    console.log('🕘 Время для ежедневных отчетов!');
+    logEvent('info', 'Daily reports cron job started');
     sendDailyReports();
 }, {
     scheduled: true,
     timezone: "Europe/Moscow"
 });
 
-console.log('⏰ Планировщик ежедневных отчетов настроен (каждый день в 21:00 МСК)');
+// --- Health Check Cron Job ---
+// Проверяем здоровье системы каждые 30 минут
+cron.schedule('*/30 * * * *', async () => {
+    try {
+        const healthStatus = await performHealthCheck();
+        if (healthStatus.status !== 'healthy') {
+            logEvent('warn', 'System health degraded', healthStatus);
+            // В продакшене можно добавить уведомления администраторам
+        }
+    } catch (error) {
+        logEvent('error', 'Health check failed', { error: error.toString() });
+    }
+}, {
+    scheduled: true,
+    timezone: "Europe/Moscow"
+});
+
+// --- Memory Cleanup Cron Job ---
+// Очищаем старые записи rate limiting каждый час
+cron.schedule('0 * * * *', () => {
+    const now = Date.now();
+    let cleanedUsers = 0;
+    
+    for (const [userId, requests] of userRateLimits.entries()) {
+        const recentRequests = requests.filter(timestamp => now - timestamp < RATE_LIMIT_WINDOW);
+        if (recentRequests.length === 0) {
+            userRateLimits.delete(userId);
+            cleanedUsers++;
+        } else {
+            userRateLimits.set(userId, recentRequests);
+        }
+    }
+    
+    logEvent('info', 'Memory cleanup completed', { 
+        cleanedUsers, 
+        activeUsers: userRateLimits.size 
+    });
+}, {
+    scheduled: true,
+    timezone: "Europe/Moscow"
+});
+
+logEvent('info', 'Cron jobs configured', {
+    dailyReports: '21:00 daily',
+    healthCheck: 'every 30 minutes',
+    memoryCleanup: 'hourly'
+});
 
 module.exports = { setupBot }; 
