@@ -2851,12 +2851,10 @@ const createWeeklyChallenge = async () => {
         weekStart.setDate(diff);
         weekStart.setHours(0, 0, 0, 0);
 
-        const weekEnd = new Date(weekStart);
-        weekEnd.setDate(weekEnd.getDate() + 6);
-        weekEnd.setHours(23, 59, 59, 999);
+        console.log('Creating challenge for week start:', weekStart.toISOString());
 
-        // Сохраняем челлендж в базу данных
-        const { error } = await supabase
+        // Сохраняем челлендж в базу данных и возвращаем сохраненные данные
+        const { data: savedChallenge, error } = await supabase
             .from('weekly_challenges')
             .upsert({
                 week_start: weekStart.toISOString(),
@@ -2867,17 +2865,27 @@ const createWeeklyChallenge = async () => {
                 type: challengeData.type,
                 motivation: challengeData.motivation,
                 created_at: new Date().toISOString()
-            }, { onConflict: 'week_start' });
+            }, { 
+                onConflict: 'week_start',
+                select: '*'
+            })
+            .single();
 
-        if (error) throw error;
+        if (error) {
+            console.error('Error saving challenge:', error);
+            throw error;
+        }
+
+        console.log('Challenge saved successfully:', savedChallenge);
 
         logEvent('info', 'Weekly challenge created and saved', { 
             title: challengeData.title,
             week_start: weekStart.toISOString()
         });
 
-        return { success: true, data: challengeData };
+        return { success: true, data: savedChallenge };
     } catch (error) {
+        console.error('Error in createWeeklyChallenge:', error);
         logEvent('error', 'Error creating weekly challenge', { error: error.toString() });
         return { success: false, error: error.message };
     }
@@ -2892,23 +2900,31 @@ const getCurrentChallenge = async () => {
         weekStart.setDate(diff);
         weekStart.setHours(0, 0, 0, 0);
 
+        console.log('Getting challenge for week start:', weekStart.toISOString());
+
         const { data: challenge, error } = await supabase
             .from('weekly_challenges')
             .select('*')
             .eq('week_start', weekStart.toISOString())
             .single();
 
+        console.log('Challenge query result:', { challenge, error });
+
         if (error || !challenge) {
+            console.log('No challenge found, creating new one...');
             // Если челлендж не найден, создаем новый
             const createResult = await createWeeklyChallenge();
-            if (createResult.success) {
-                return await getCurrentChallenge(); // Рекурсивно получаем созданный челлендж
+            console.log('Create challenge result:', createResult);
+            
+            if (createResult.success && createResult.data) {
+                return { success: true, data: createResult.data };
             }
-            return { success: false, error: 'No challenge found' };
+            return { success: false, error: 'No challenge found and failed to create' };
         }
 
         return { success: true, data: challenge };
     } catch (error) {
+        console.error('Error in getCurrentChallenge:', error);
         logEvent('error', 'Error getting current challenge', { error: error.toString() });
         return { success: false, error: error.message };
     }
