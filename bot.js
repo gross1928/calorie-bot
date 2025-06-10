@@ -205,6 +205,7 @@ const workoutPlanState = {};
 const nutritionPlanState = {};
 const waterInputState = {};
 const profileEditState = {};
+const challengeStepsState = {};
 
 // Состояние для ожидания вопросов от пользователя
 const questionState = {};
@@ -2771,6 +2772,388 @@ const showProfileMenu = async (chat_id, telegram_id) => {
     }
 };
 
+// --- Challenge System Functions ---
+const generateWeeklyChallenge = async () => {
+    try {
+        logEvent('info', 'Generating weekly challenge');
+        
+        const response = await withTimeout(openai.chat.completions.create({
+            model: 'gpt-4o',
+            messages: [
+                {
+                    role: 'system',
+                    content: `Ты - мотивирующий фитнес-тренер. Создай еженедельный челлендж для пользователей фитнес-бота.
+
+ТРЕБОВАНИЯ:
+- Челлендж должен быть связан со здоровьем и фитнесом
+- Мотивирующий и достижимый для обычного человека
+- Включать конкретную цель с числами
+- Быть интересным и разнообразным
+
+ПРИМЕРЫ ХОРОШИХ ЧЕЛЛЕНДЖЕЙ:
+- "Пройти 70,000 шагов за неделю!"
+- "Выпить 14 литров воды за неделю!"
+- "Сделать 500 приседаний за неделю!"
+- "Заниматься спортом 5 дней по 30 минут!"
+- "Пройти 10 км за неделю!"
+
+Верни ТОЛЬКО JSON в формате:
+{
+  "title": "Краткое название челленджа",
+  "description": "Подробное описание (2-3 предложения)",
+  "target_value": число - целевое значение,
+  "unit": "единица измерения (шаги, литры, минуты, км, раз)",
+  "type": "тип челленджа (steps, water, workout_time, distance, exercises)",
+  "motivation": "Мотивирующее сообщение (1-2 предложения)"
+}`
+                },
+                {
+                    role: 'user',
+                    content: 'Создай новый еженедельный челлендж для этой недели!'
+                }
+            ],
+            max_tokens: 400,
+        }), 15000);
+
+        const content = response.choices[0].message.content;
+        const jsonString = content.replace(/```json/g, '').replace(/```/g, '').trim();
+        const challengeData = JSON.parse(jsonString);
+
+        logEvent('info', 'Weekly challenge generated', { title: challengeData.title });
+        return { success: true, data: challengeData };
+
+    } catch (error) {
+        logEvent('error', 'Error generating weekly challenge', { error: error.toString() });
+        // Возвращаем дефолтный челлендж в случае ошибки
+        return {
+            success: true,
+            data: {
+                title: "Пройти 70,000 шагов за неделю!",
+                description: "Активность - основа здоровья! Двигайтесь каждый день и достигните 70,000 шагов за неделю.",
+                target_value: 70000,
+                unit: "шагов",
+                type: "steps",
+                motivation: "Каждый шаг приближает вас к цели! Вы сможете это сделать! 💪"
+            }
+        };
+    }
+};
+
+const createWeeklyChallenge = async () => {
+    try {
+        const challengeResult = await generateWeeklyChallenge();
+        if (!challengeResult.success) throw new Error('Failed to generate challenge');
+
+        const challengeData = challengeResult.data;
+        const weekStart = new Date();
+        const day = weekStart.getDay();
+        const diff = weekStart.getDate() - day + (day === 0 ? -6 : 1); // Понедельник
+        weekStart.setDate(diff);
+        weekStart.setHours(0, 0, 0, 0);
+
+        const weekEnd = new Date(weekStart);
+        weekEnd.setDate(weekEnd.getDate() + 6);
+        weekEnd.setHours(23, 59, 59, 999);
+
+        // Сохраняем челлендж в базу данных
+        const { error } = await supabase
+            .from('weekly_challenges')
+            .upsert({
+                week_start: weekStart.toISOString(),
+                title: challengeData.title,
+                description: challengeData.description,
+                target_value: challengeData.target_value,
+                unit: challengeData.unit,
+                type: challengeData.type,
+                motivation: challengeData.motivation,
+                created_at: new Date().toISOString()
+            }, { onConflict: 'week_start' });
+
+        if (error) throw error;
+
+        logEvent('info', 'Weekly challenge created and saved', { 
+            title: challengeData.title,
+            week_start: weekStart.toISOString()
+        });
+
+        return { success: true, data: challengeData };
+    } catch (error) {
+        logEvent('error', 'Error creating weekly challenge', { error: error.toString() });
+        return { success: false, error: error.message };
+    }
+};
+
+const getCurrentChallenge = async () => {
+    try {
+        const now = new Date();
+        const weekStart = new Date();
+        const day = weekStart.getDay();
+        const diff = weekStart.getDate() - day + (day === 0 ? -6 : 1); // Понедельник
+        weekStart.setDate(diff);
+        weekStart.setHours(0, 0, 0, 0);
+
+        const { data: challenge, error } = await supabase
+            .from('weekly_challenges')
+            .select('*')
+            .eq('week_start', weekStart.toISOString())
+            .single();
+
+        if (error || !challenge) {
+            // Если челлендж не найден, создаем новый
+            const createResult = await createWeeklyChallenge();
+            if (createResult.success) {
+                return await getCurrentChallenge(); // Рекурсивно получаем созданный челлендж
+            }
+            return { success: false, error: 'No challenge found' };
+        }
+
+        return { success: true, data: challenge };
+    } catch (error) {
+        logEvent('error', 'Error getting current challenge', { error: error.toString() });
+        return { success: false, error: error.message };
+    }
+};
+
+const addSteps = async (telegram_id, steps) => {
+    try {
+        if (!steps || steps <= 0) {
+            return { success: false, error: 'Количество шагов должно быть больше 0' };
+        }
+
+        // Получаем профиль пользователя
+        const { data: profile, error: profileError } = await supabase
+            .from('profiles')
+            .select('id')
+            .eq('telegram_id', telegram_id)
+            .single();
+
+        if (profileError || !profile) {
+            return { success: false, error: 'Профиль не найден' };
+        }
+
+        const now = new Date();
+        const today = now.toISOString().split('T')[0];
+
+        // Добавляем шаги в базу данных
+        const { error } = await supabase
+            .from('steps_tracking')
+            .upsert({
+                user_id: profile.id,
+                date: today,
+                steps: steps,
+                updated_at: new Date().toISOString()
+            }, { 
+                onConflict: 'user_id,date',
+                ignoreDuplicates: false 
+            });
+
+        if (error) throw error;
+
+        logEvent('info', 'Steps added', { telegram_id, steps, date: today });
+        return { success: true };
+
+    } catch (error) {
+        logEvent('error', 'Error adding steps', { telegram_id, steps, error: error.toString() });
+        return { success: false, error: 'Ошибка при добавлении шагов' };
+    }
+};
+
+const getStepsStats = async (telegram_id, period = 'week') => {
+    try {
+        const { data: profile, error: profileError } = await supabase
+            .from('profiles')
+            .select('id')
+            .eq('telegram_id', telegram_id)
+            .single();
+
+        if (profileError || !profile) {
+            return { success: false, error: 'Профиль не найден' };
+        }
+
+        const now = new Date();
+        let startDate, endDate;
+
+        if (period === 'week') {
+            // Текущая неделя (понедельник-воскресенье)
+            const day = now.getDay();
+            const diff = now.getDate() - day + (day === 0 ? -6 : 1);
+            startDate = new Date(now);
+            startDate.setDate(diff);
+            startDate.setHours(0, 0, 0, 0);
+            
+            endDate = new Date(startDate);
+            endDate.setDate(endDate.getDate() + 6);
+            endDate.setHours(23, 59, 59, 999);
+        } else {
+            // today
+            startDate = new Date(now);
+            startDate.setHours(0, 0, 0, 0);
+            endDate = new Date(now);
+            endDate.setHours(23, 59, 59, 999);
+        }
+
+        const { data: stepsData, error } = await supabase
+            .from('steps_tracking')
+            .select('date, steps')
+            .eq('user_id', profile.id)
+            .gte('date', startDate.toISOString().split('T')[0])
+            .lte('date', endDate.toISOString().split('T')[0])
+            .order('date');
+
+        if (error) throw error;
+
+        const totalSteps = stepsData ? stepsData.reduce((sum, day) => sum + (day.steps || 0), 0) : 0;
+        
+        const byDate = {};
+        if (stepsData) {
+            stepsData.forEach(day => {
+                byDate[day.date] = day.steps || 0;
+            });
+        }
+
+        return {
+            success: true,
+            totalSteps,
+            byDate,
+            period
+        };
+
+    } catch (error) {
+        logEvent('error', 'Error getting steps stats', { telegram_id, period, error: error.toString() });
+        return { success: false, error: 'Ошибка при получении статистики шагов' };
+    }
+};
+
+const showChallengeMenu = async (chat_id, telegram_id) => {
+    try {
+        const challengeResult = await getCurrentChallenge();
+        if (!challengeResult.success) {
+            bot.sendMessage(chat_id, '❌ Не удалось загрузить текущий челлендж. Попробуйте позже.');
+            return;
+        }
+
+        const challenge = challengeResult.data;
+        const stepsStats = await getStepsStats(telegram_id, 'week');
+        
+        const totalSteps = stepsStats.success ? stepsStats.totalSteps : 0;
+        const progress = Math.min(Math.round((totalSteps / challenge.target_value) * 100), 100);
+        
+        let challengeText = `🏆 **ЧЕЛЛЕНДЖ НЕДЕЛИ**\n\n`;
+        challengeText += `**${challenge.title}**\n`;
+        challengeText += `${challenge.description}\n\n`;
+        
+        challengeText += `📊 **Ваш прогресс:**\n`;
+        challengeText += `${createProgressBar(totalSteps, challenge.target_value)}\n`;
+        challengeText += `${totalSteps.toLocaleString()} / ${challenge.target_value.toLocaleString()} ${challenge.unit} (${progress}%)\n\n`;
+        
+        if (progress >= 100) {
+            challengeText += `🎉 **ПОЗДРАВЛЯЕМ!** Вы выполнили челлендж!\n`;
+            challengeText += `${challenge.motivation}\n\n`;
+        } else {
+            challengeText += `💪 ${challenge.motivation}\n\n`;
+        }
+        
+        challengeText += `Добавьте пройденные сегодня шаги:`;
+
+        bot.sendMessage(chat_id, challengeText, {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [
+                        { text: '1️⃣ 1000', callback_data: 'challenge_add_steps_1000' },
+                        { text: '2️⃣ 2000', callback_data: 'challenge_add_steps_2000' }
+                    ],
+                    [
+                        { text: '3️⃣ 3000', callback_data: 'challenge_add_steps_3000' },
+                        { text: '5️⃣ 5000', callback_data: 'challenge_add_steps_5000' }
+                    ],
+                    [
+                        { text: '🔟 10000', callback_data: 'challenge_add_steps_10000' },
+                        { text: '✏️ Свое число', callback_data: 'challenge_add_custom_steps' }
+                    ],
+                    [
+                        { text: '📊 Статистика за неделю', callback_data: 'challenge_stats' }
+                    ]
+                ]
+            }
+        });
+
+    } catch (error) {
+        console.error('Error showing challenge menu:', error);
+        bot.sendMessage(chat_id, 'Произошла ошибка при загрузке челленджа. Попробуйте позже.');
+    }
+};
+
+const sendWeeklyChallengeNotifications = async (type = 'new') => {
+    try {
+        logEvent('info', 'Sending weekly challenge notifications', { type });
+
+        // Получаем всех пользователей с уведомлениями
+        const { data: users, error } = await supabase
+            .from('profiles')
+            .select('telegram_id, first_name')
+            .eq('notifications_enabled', true);
+
+        if (error) throw error;
+
+        const challengeResult = await getCurrentChallenge();
+        if (!challengeResult.success) {
+            logEvent('error', 'Failed to get current challenge for notifications');
+            return;
+        }
+
+        const challenge = challengeResult.data;
+        let messageText = '';
+
+        if (type === 'new') {
+            messageText = `🚀 **НОВЫЙ ЧЕЛЛЕНДЖ НЕДЕЛИ!**\n\n`;
+            messageText += `**${challenge.title}**\n`;
+            messageText += `${challenge.description}\n\n`;
+            messageText += `💪 ${challenge.motivation}\n\n`;
+            messageText += `Заходите в меню "Челлендж" и начинайте добавлять свои шаги! 🚶‍♂️`;
+        } else if (type === 'reminder') {
+            messageText = `⏰ **НАПОМИНАНИЕ О ЧЕЛЛЕНДЖЕ**\n\n`;
+            messageText += `Не забывайте про текущий челлендж:\n`;
+            messageText += `**${challenge.title}**\n\n`;
+            messageText += `Проверьте свой прогресс в меню "Челлендж"! 📊`;
+        }
+
+        if (!users || users.length === 0) {
+            logEvent('warn', 'No users found for challenge notifications');
+            return;
+        }
+
+        let successCount = 0;
+        let errorCount = 0;
+
+        for (const user of users) {
+            try {
+                await bot.sendMessage(user.telegram_id, messageText, {
+                    parse_mode: 'Markdown'
+                });
+                successCount++;
+                
+                // Небольшая задержка между сообщениями
+                await new Promise(resolve => setTimeout(resolve, 100));
+                
+            } catch (error) {
+                console.error(`Failed to send challenge notification to ${user.telegram_id}:`, error);
+                errorCount++;
+            }
+        }
+
+        logEvent('info', 'Challenge notifications sent', {
+            type,
+            total: users.length,
+            success: successCount,
+            errors: errorCount
+        });
+
+    } catch (error) {
+        logEvent('error', 'Error sending challenge notifications', { type, error: error.toString() });
+    }
+};
+
 // --- Daily Reports Functions ---
 const generateDailyReport = async (telegram_id) => {
     try {
@@ -3033,7 +3416,8 @@ const setupBot = (app) => {
                     [{ text: '📸 Добавить по фото' }],
                     [{ text: '✍️ Добавить вручную' }, { text: '📊 Статистика' }],
                     [{ text: '🏋️ План тренировок' }, { text: '🍽️ План питания' }],
-                    [{ text: '💧 Отслеживание воды' }, { text: '👤 Профиль' }]
+                    [{ text: '💧 Отслеживание воды' }, { text: '🏆 Челлендж' }],
+                    [{ text: '👤 Профиль' }]
                 ],
                 resize_keyboard: true,
                 one_time_keyboard: false
@@ -3352,6 +3736,10 @@ const setupBot = (app) => {
         }
         if (msg.text === '👤 Профиль') {
             showProfileMenu(chat_id, telegram_id);
+            return;
+        }
+        if (msg.text === '🏆 Челлендж') {
+            showChallengeMenu(chat_id, telegram_id);
             return;
         }
 
@@ -3771,6 +4159,7 @@ const setupBot = (app) => {
         const manualAddStep = manualAddState[telegram_id]?.step;
         const isWaitingForQuestion = questionState[telegram_id]?.waiting;
         const isWaitingForWater = waterInputState[telegram_id]?.waiting;
+        const isWaitingForSteps = challengeStepsState[telegram_id]?.waiting;
         const isEditingProfile = profileEditState[telegram_id]?.field;
 
         if (isWaitingForQuestion) {
@@ -3830,6 +4219,31 @@ const setupBot = (app) => {
                 bot.sendMessage(chat_id, responseText);
             } else {
                 bot.sendMessage(chat_id, `❌ Ошибка при сохранении: ${result.error}`);
+            }
+            return;
+        }
+
+        if (isWaitingForSteps) {
+            // Пользователь ввел количество шагов
+            delete challengeStepsState[telegram_id];
+
+            // Валидация ввода шагов
+            const stepsAmount = parseInt(msg.text);
+            if (isNaN(stepsAmount) || stepsAmount <= 0 || stepsAmount > 100000) {
+                bot.sendMessage(chat_id, '❌ Пожалуйста, введите корректное количество шагов от 1 до 100,000.');
+                return;
+            }
+
+            const result = await addSteps(telegram_id, stepsAmount);
+            if (result.success) {
+                await bot.sendMessage(chat_id, `✅ Добавлено ${stepsAmount.toLocaleString()} шагов!\n\nОбновляю ваш прогресс...`);
+                
+                // Показываем обновленное меню через 2 секунды
+                setTimeout(() => {
+                    showChallengeMenu(chat_id, telegram_id);
+                }, 2000);
+            } else {
+                bot.sendMessage(chat_id, `❌ Ошибка при добавлении шагов: ${result.error}`);
             }
             return;
         }
@@ -4446,6 +4860,108 @@ const setupBot = (app) => {
         const [action, ...params] = data.split('_');
         
         console.log(`>>> CALLBACK: User: ${telegram_id}, Data: ${data}, Action: ${action}, Params: ${params}`);
+        
+        // --- Challenge Callbacks ---
+        if (data.startsWith('challenge_')) {
+            await bot.answerCallbackQuery(callbackQuery.id);
+            
+            if (data.startsWith('challenge_add_steps_')) {
+                // Добавление определенного количества шагов
+                const stepsAmount = parseInt(data.split('_')[3]);
+                const result = await addSteps(telegram_id, stepsAmount);
+                
+                if (result.success) {
+                    await bot.editMessageText(`✅ Добавлено ${stepsAmount} шагов!\n\nОбновляю ваш прогресс...`, {
+                        chat_id, message_id: msg.message_id
+                    });
+                    
+                    // Показываем обновленное меню через 2 секунды
+                    setTimeout(() => {
+                        showChallengeMenu(chat_id, telegram_id);
+                    }, 2000);
+                } else {
+                    await bot.editMessageText(`❌ Ошибка при добавлении шагов: ${result.error}`, {
+                        chat_id, message_id: msg.message_id
+                    });
+                }
+                
+            } else if (data === 'challenge_add_custom_steps') {
+                // Ввод произвольного количества шагов
+                challengeStepsState[telegram_id] = { waiting: true };
+                await bot.editMessageText('Введите количество пройденных шагов:\n\n(например: 7500)', {
+                    chat_id, message_id: msg.message_id,
+                    reply_markup: null
+                });
+                
+            } else if (data === 'challenge_stats') {
+                // Показываем статистику
+                const challengeResult = await getCurrentChallenge();
+                const stepsStats = await getStepsStats(telegram_id, 'week');
+                
+                if (challengeResult.success && stepsStats.success) {
+                    const challenge = challengeResult.data;
+                    const totalSteps = stepsStats.totalSteps;
+                    const progress = Math.min(Math.round((totalSteps / challenge.target_value) * 100), 100);
+                    
+                    // Статистика по дням недели
+                    const today = new Date();
+                    const weekStart = new Date();
+                    const day = weekStart.getDay();
+                    const diff = weekStart.getDate() - day + (day === 0 ? -6 : 1);
+                    weekStart.setDate(diff);
+                    
+                    let statsText = `📊 **СТАТИСТИКА НЕДЕЛИ**\n\n`;
+                    statsText += `🏆 **Челлендж:** ${challenge.title}\n`;
+                    statsText += `🎯 **Прогресс:** ${totalSteps.toLocaleString()} / ${challenge.target_value.toLocaleString()} ${challenge.unit}\n`;
+                    statsText += `📈 **Выполнено:** ${progress}%\n\n`;
+                    
+                    statsText += `📅 **По дням:**\n`;
+                    const dayNames = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+                    
+                    for (let i = 0; i < 7; i++) {
+                        const currentDay = new Date(weekStart);
+                        currentDay.setDate(weekStart.getDate() + i);
+                        const dateString = currentDay.toISOString().split('T')[0];
+                        const daySteps = stepsStats.byDate[dateString] || 0;
+                        const isToday = dateString === today.toISOString().split('T')[0];
+                        
+                        statsText += `${dayNames[i]}: ${daySteps.toLocaleString()} шагов ${isToday ? '👈' : ''}\n`;
+                    }
+                    
+                    if (progress >= 100) {
+                        statsText += `\n🎉 Поздравляем! Челлендж выполнен!`;
+                    } else {
+                        const remaining = challenge.target_value - totalSteps;
+                        const daysLeft = 7 - ((today.getDay() + 6) % 7);
+                        const avgNeeded = daysLeft > 0 ? Math.ceil(remaining / daysLeft) : remaining;
+                        statsText += `\n💪 Осталось: ${remaining.toLocaleString()} шагов`;
+                        if (daysLeft > 0) {
+                            statsText += `\n📍 В среднем ${avgNeeded.toLocaleString()} шагов/день`;
+                        }
+                    }
+                    
+                    await bot.editMessageText(statsText, {
+                        chat_id, message_id: msg.message_id,
+                        parse_mode: 'Markdown',
+                        reply_markup: {
+                            inline_keyboard: [
+                                [{ text: '🔙 Назад к челленджу', callback_data: 'challenge_back' }]
+                            ]
+                        }
+                    });
+                } else {
+                    await bot.editMessageText('❌ Не удалось загрузить статистику', {
+                        chat_id, message_id: msg.message_id
+                    });
+                }
+                
+            } else if (data === 'challenge_back') {
+                // Возвращаемся к меню челленджа
+                showChallengeMenu(chat_id, telegram_id);
+            }
+            
+            return;
+        }
         
         // --- Plan Action Callbacks ---
         if (data.startsWith('workout_action_') || data.startsWith('nutrition_action_')) {
@@ -5709,8 +6225,8 @@ const setupBot = (app) => {
 };
 
 // --- Daily Reports Cron Job ---
-// Запускаем ежедневные отчеты каждый день в 21:00 (по московскому времени)
-cron.schedule('0 21 * * *', () => {
+// Запускаем ежедневные отчеты каждый день в 9:00 утра (по московскому времени)
+cron.schedule('0 9 * * *', () => {
     logEvent('info', 'Daily reports cron job started');
     sendDailyReports();
 }, {
@@ -5760,10 +6276,59 @@ cron.schedule('0 * * * *', () => {
     timezone: "Europe/Moscow"
 });
 
+// --- Weekly Challenge Cron Jobs ---
+// Создаем новый челлендж каждый понедельник в 10:00
+cron.schedule('0 10 * * 1', async () => {
+    logEvent('info', 'Weekly challenge creation cron job started');
+    try {
+        const result = await createWeeklyChallenge();
+        if (result.success) {
+            logEvent('info', 'New weekly challenge created successfully');
+            // Отправляем уведомление о новом челлендже
+            await sendWeeklyChallengeNotifications('new');
+        } else {
+            logEvent('error', 'Failed to create weekly challenge', result);
+        }
+    } catch (error) {
+        logEvent('error', 'Error in weekly challenge creation cron job', { error: error.toString() });
+    }
+}, {
+    scheduled: true,
+    timezone: "Europe/Moscow"
+});
+
+// Напоминания о челлендже по средам в 12:00
+cron.schedule('0 12 * * 3', async () => {
+    logEvent('info', 'Weekly challenge reminder (Wednesday) cron job started');
+    try {
+        await sendWeeklyChallengeNotifications('reminder');
+    } catch (error) {
+        logEvent('error', 'Error in Wednesday challenge reminder cron job', { error: error.toString() });
+    }
+}, {
+    scheduled: true,
+    timezone: "Europe/Moscow"
+});
+
+// Напоминания о челлендже по пятницам в 18:00
+cron.schedule('0 18 * * 5', async () => {
+    logEvent('info', 'Weekly challenge reminder (Friday) cron job started');
+    try {
+        await sendWeeklyChallengeNotifications('reminder');
+    } catch (error) {
+        logEvent('error', 'Error in Friday challenge reminder cron job', { error: error.toString() });
+    }
+}, {
+    scheduled: true,
+    timezone: "Europe/Moscow"
+});
+
 logEvent('info', 'Cron jobs configured', {
-    dailyReports: '21:00 daily',
+    dailyReports: '9:00 daily',
     healthCheck: 'every 30 minutes',
-    memoryCleanup: 'hourly'
+    memoryCleanup: 'hourly',
+    challengeCreation: 'Monday 10:00',
+    challengeReminders: 'Wednesday 12:00, Friday 18:00'
 });
 
 module.exports = { setupBot }; 
