@@ -3134,7 +3134,7 @@ const setupBot = (app) => {
     });
 
     // 🔧 КОМАНДЫ АДМИНИСТРАТОРА
-    const ADMIN_IDS = [123456789]; // ЗАМЕНИТЕ НА ВАШ TELEGRAM_ID!
+    const ADMIN_IDS = [6103273611]; // Ваш telegram_id
     
     bot.onText(/\/admin_health/, async (msg) => {
         const telegram_id = msg.from.id;
