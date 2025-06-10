@@ -1325,9 +1325,18 @@ const generateWorkoutPlanHTML = (planContent, profileData, planData) => {
                     exercises += `
                         <div class="exercise-row">
                             <span class="exercise-name">${exerciseName}</span>
-                            <span class="exercise-sets">${sets}</span>
-                            <span class="exercise-reps">${reps}</span>
-                            <span class="exercise-rest">${rest}</span>
+                            <span class="exercise-sets">
+                                <span class="exercise-label">Подходы:</span>
+                                <span class="exercise-value">${sets}</span>
+                            </span>
+                            <span class="exercise-reps">
+                                <span class="exercise-label">Повторения:</span>
+                                <span class="exercise-value">${reps}</span>
+                            </span>
+                            <span class="exercise-rest">
+                                <span class="exercise-label">Отдых:</span>
+                                <span class="exercise-value">${rest}</span>
+                            </span>
                         </div>
                     `;
                 }
@@ -1607,31 +1616,51 @@ const generateWorkoutPlanHTML = (planContent, profileData, planData) => {
         .exercise-sets {
             color: #ff6b6b;
             font-weight: 500;
-            font-family: 'JetBrains Mono', monospace;
             background: rgba(255, 107, 107, 0.1);
-            padding: 5px 10px;
+            padding: 8px 12px;
             border-radius: 8px;
             text-align: center;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
         }
         
         .exercise-reps {
             color: #4ecdc4;
             font-weight: 500;
-            font-family: 'JetBrains Mono', monospace;
             background: rgba(78, 205, 196, 0.1);
-            padding: 5px 10px;
+            padding: 8px 12px;
             border-radius: 8px;
             text-align: center;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
         }
         
         .exercise-rest {
             color: #a78bfa;
             font-weight: 500;
-            font-family: 'JetBrains Mono', monospace;
             background: rgba(167, 139, 250, 0.1);
-            padding: 5px 10px;
+            padding: 8px 12px;
             border-radius: 8px;
             text-align: center;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        
+        .exercise-label {
+            font-size: 0.75rem;
+            opacity: 0.8;
+            font-weight: 400;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .exercise-value {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 1.1rem;
+            font-weight: 600;
         }
         
         .exercise-text {
@@ -3060,31 +3089,28 @@ const showChallengeMenu = async (chat_id, telegram_id) => {
         
         challengeText += `📊 **Ваш прогресс:**\n`;
         challengeText += `${createProgressBar(totalSteps, challenge.target_value)}\n`;
-        challengeText += `${totalSteps.toLocaleString()} / ${challenge.target_value.toLocaleString()} ${challenge.unit} (${progress}%)\n\n`;
+        challengeText += `**${totalSteps.toLocaleString()} / ${challenge.target_value.toLocaleString()}** ${challenge.unit} (**${progress}%**)\n\n`;
         
         if (progress >= 100) {
-            challengeText += `🎉 **ПОЗДРАВЛЯЕМ!** Вы выполнили челлендж!\n`;
-            challengeText += `${challenge.motivation}\n\n`;
-        } else {
-            challengeText += `💪 ${challenge.motivation}\n\n`;
+            challengeText += `🎉 **ПОЗДРАВЛЯЕМ!** Вы выполнили челлендж!\n\n`;
         }
         
-        challengeText += `Добавьте пройденные сегодня шаги:`;
+        challengeText += `**Добавьте пройденные сегодня шаги:**`;
 
         bot.sendMessage(chat_id, challengeText, {
             parse_mode: 'Markdown',
             reply_markup: {
                 inline_keyboard: [
                     [
-                        { text: '1️⃣ 1000', callback_data: 'challenge_add_steps_1000' },
-                        { text: '2️⃣ 2000', callback_data: 'challenge_add_steps_2000' }
+                        { text: '1000', callback_data: 'challenge_add_steps_1000' },
+                        { text: '2000', callback_data: 'challenge_add_steps_2000' }
                     ],
                     [
-                        { text: '3️⃣ 3000', callback_data: 'challenge_add_steps_3000' },
-                        { text: '5️⃣ 5000', callback_data: 'challenge_add_steps_5000' }
+                        { text: '3000', callback_data: 'challenge_add_steps_3000' },
+                        { text: '5000', callback_data: 'challenge_add_steps_5000' }
                     ],
                     [
-                        { text: '🔟 10000', callback_data: 'challenge_add_steps_10000' },
+                        { text: '10000', callback_data: 'challenge_add_steps_10000' },
                         { text: '✏️ Свое число', callback_data: 'challenge_add_custom_steps' }
                     ],
                     [
