@@ -206,12 +206,26 @@ const nutritionPlanState = {};
 const waterInputState = {};
 const profileEditState = {};
 const challengeStepsState = {};
+const workoutInjuryState = {};
 
 // Состояние для ожидания вопросов от пользователя
 const questionState = {};
 
 // Состояние для анализа медицинских данных
 const medicalAnalysisState = {};
+
+// Защита от повторных нажатий (debounce для callbacks)
+const callbackDebounce = {};
+
+// Очистка debounce данных каждую минуту
+setInterval(() => {
+    const now = Date.now();
+    for (const key in callbackDebounce) {
+        if (now - callbackDebounce[key] > 60000) { // Удаляем записи старше 1 минуты
+            delete callbackDebounce[key];
+        }
+    }
+}, 60000);
 
 // --- Typing Indicator and Streaming Functions ---
 const showTyping = async (chat_id, duration = 3000) => {
@@ -2659,8 +2673,8 @@ const sendDailyReports = async () => {
         // Получаем подписки для фильтрации пользователей (платные + PROMO с активными демо)
         const { data: subscriptions, error: subscriptionsError } = await supabase
             .from('user_subscriptions')
-            .select('user_id, plan, subscription_type, promo_expires_at')
-            .or('plan.in.(progress,maximum),and(subscription_type.eq.PROMO,promo_expires_at.gt.' + new Date().toISOString() + ')');
+            .select('user_id, plan, promo_expires_at')
+            .or('plan.in.(progress,maximum),and(promo_expires_at.gt.' + new Date().toISOString() + ')');
 
         if (subscriptionsError) {
             console.error('Error fetching subscriptions for daily reports:', subscriptionsError);
@@ -2839,9 +2853,12 @@ const generateWeeklyReport = async (telegram_id) => {
         reportText += `${createProgressBar(avgWater, waterNorm)}\n`;
         
         if (waterGoalPercent < 70) {
-            reportText += `🚨 **КРИТИЧЕСКОЕ ОБЕЗВОЖИВАНИЕ!** Пей +${(waterNorm - avgWater).toFixed(0)} мл/день\n\n`;
+            reportText += `🚨 **КРИТИЧЕСКОЕ ОБЕЗВОЖИВАНИЕ!** Пей +${(waterNorm - avgWater).toFixed(0)} мл/день\n`;
+            reportText += `💡 **Лайфхак:** Ставь напоминания каждый час, купи красивую бутылку\n`;
+            reportText += `⚠️ **Риск:** Замедление метаболизма, ухудшение состояния кожи\n\n`;
         } else if (waterGoalPercent < 90) {
-            reportText += `⚠️ **Недостаток воды!** Добавь +${(waterNorm - avgWater).toFixed(0)} мл/день\n\n`;
+            reportText += `⚠️ **Недостаток воды!** Добавь +${(waterNorm - avgWater).toFixed(0)} мл/день\n`;
+            reportText += `💡 **Совет:** Начинай день со стакана воды, пей перед каждым приемом пищи\n\n`;
         } else {
             reportText += `✅ **Отличная гидратация!** 🌊\n\n`;
         }
@@ -4107,6 +4124,7 @@ const setupBot = (app) => {
         const isWaitingForWater = waterInputState[telegram_id]?.waiting;
         const isWaitingForSteps = challengeStepsState[telegram_id]?.waiting;
         const isEditingProfile = profileEditState[telegram_id]?.field;
+        const isWaitingForInjuryDetails = workoutInjuryState[telegram_id]?.waiting;
 
         if (isWaitingForQuestion) {
             // Пользователь задает вопрос - обрабатываем его через AI
@@ -4130,6 +4148,33 @@ const setupBot = (app) => {
                 console.error("Error answering user question:", error);
                 await bot.sendMessage(chat_id, '🤖 Извините, произошла ошибка при обработке вашего вопроса. Попробуйте еще раз или используйте основные функции бота.');
             }
+            return;
+        }
+
+        if (isWaitingForInjuryDetails) {
+            // Пользователь описал травмы - сохраняем и переходим к следующему шагу
+            delete workoutInjuryState[telegram_id];
+            
+            const state = workoutPlanState[telegram_id];
+            if (!state || state.step !== 'ask_injuries') {
+                bot.sendMessage(chat_id, 'Сессия истекла. Пожалуйста, начните заново.');
+                return;
+            }
+
+            // Сохраняем описание травм
+            state.data = { ...state.data, injuries: msg.text.trim() };
+            state.step = 'ask_location';
+
+            // Переходим к выбору места тренировок
+            bot.sendMessage(chat_id, 'Где вы планируете тренироваться?', {
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: 'Дома', callback_data: 'workout_location_home' }],
+                        [{ text: 'В зале', callback_data: 'workout_location_gym' }],
+                        [{ text: 'На улице', callback_data: 'workout_location_outdoor' }]
+                    ]
+                }
+            });
             return;
         }
 
@@ -4541,15 +4586,15 @@ const setupBot = (app) => {
                 }
                 
                 nutritionState.data.timeframe_months = timeframe;
-                nutritionState.step = 'ask_preferences';
+                nutritionState.step = 'ask_activity';
                 
-                bot.sendMessage(chat_id, 'Теперь расскажите о ваших пищевых предпочтениях:', {
+                bot.sendMessage(chat_id, 'Какой у вас уровень активности?', {
                     reply_markup: {
                         inline_keyboard: [
-                            [{ text: 'Обычное питание', callback_data: 'nutrition_pref_regular' }],
-                            [{ text: 'Вегетарианство', callback_data: 'nutrition_pref_vegetarian' }],
-                            [{ text: 'Веганство', callback_data: 'nutrition_pref_vegan' }],
-                            [{ text: 'Кето-диета', callback_data: 'nutrition_pref_keto' }]
+                            [{ text: 'Низкий (сидячий образ жизни)', callback_data: 'nutrition_activity_sedentary' }],
+                            [{ text: 'Легкий (1-3 тренировки в неделю)', callback_data: 'nutrition_activity_light' }],
+                            [{ text: 'Активный (3-5 тренировок в неделю)', callback_data: 'nutrition_activity_active' }],
+                            [{ text: 'Высокий (6+ тренировок в неделю)', callback_data: 'nutrition_activity_heavy' }]
                         ]
                     }
                 });
@@ -4837,6 +4882,15 @@ const setupBot = (app) => {
         const telegram_id = callbackQuery.from.id;
         const chat_id = msg.chat.id;
         const data = callbackQuery.data;
+
+        // Защита от повторных нажатий (debounce)
+        const callbackKey = `${telegram_id}_${data}`;
+        const now = Date.now();
+        if (callbackDebounce[callbackKey] && (now - callbackDebounce[callbackKey]) < 1000) {
+            await bot.answerCallbackQuery(callbackQuery.id, { text: '⏳ Пожалуйста, подождите...' });
+            return;
+        }
+        callbackDebounce[callbackKey] = now;
 
         const [action, ...params] = data.split('_');
         
@@ -5326,26 +5380,49 @@ const setupBot = (app) => {
                             reply_markup: null
                         });
                     } else {
-                        nutritionPlanState[telegram_id] = { 
-                            step: 'ask_target_weight', 
-                            data: {},
-                            profileData: profile 
-                        };
+                        // Для планов питания проверяем, есть ли уже целевой вес в профиле
+                        if (profile.target_weight_kg) {
+                            // Целевой вес уже есть, пропускаем вопрос и переходим к следующему шагу
+                            nutritionPlanState[telegram_id] = { 
+                                step: 'ask_activity', 
+                                data: { target_weight_kg: profile.target_weight_kg, timeframe_months: profile.timeframe_months || 6 },
+                                profileData: profile 
+                            };
 
-                        let weightQuestion = '';
-                        if (profile.goal === 'lose_weight') {
-                            weightQuestion = `Для составления эффективного плана питания, скажите:\n\n**Какой вес для себя вы считаете идеальным?** (в кг, например: 65.5)\n\nВаш текущий вес: ${profile.weight_kg} кг`;
-                        } else if (profile.goal === 'gain_mass') {
-                            weightQuestion = `Для составления эффективного плана питания, скажите:\n\n**До какого веса вы хотите набрать массу?** (в кг, например: 80.5)\n\nВаш текущий вес: ${profile.weight_kg} кг`;
+                            await bot.editMessageText('Какой у вас уровень активности?', {
+                                chat_id, message_id: msg.message_id,
+                                reply_markup: {
+                                    inline_keyboard: [
+                                        [{ text: 'Низкий (сидячий образ жизни)', callback_data: 'nutrition_activity_sedentary' }],
+                                        [{ text: 'Легкий (1-3 тренировки в неделю)', callback_data: 'nutrition_activity_light' }],
+                                        [{ text: 'Активный (3-5 тренировок в неделю)', callback_data: 'nutrition_activity_active' }],
+                                        [{ text: 'Высокий (6+ тренировок в неделю)', callback_data: 'nutrition_activity_heavy' }]
+                                    ]
+                                }
+                            });
                         } else {
-                            weightQuestion = `Для составления эффективного плана питания, скажите:\n\n**Какой вес для себя вы считаете идеальным для поддержания?** (в кг, например: 70.5)\n\nВаш текущий вес: ${profile.weight_kg} кг`;
-                        }
+                            // Целевого веса нет, спрашиваем
+                            nutritionPlanState[telegram_id] = { 
+                                step: 'ask_target_weight', 
+                                data: {},
+                                profileData: profile 
+                            };
 
-                        await bot.editMessageText(weightQuestion, {
-                            chat_id, message_id: msg.message_id,
-                            parse_mode: 'Markdown',
-                            reply_markup: null
-                        });
+                            let weightQuestion = '';
+                            if (profile.goal === 'lose_weight') {
+                                weightQuestion = `Для составления эффективного плана питания, скажите:\n\n**Какой вес для себя вы считаете идеальным?** (в кг, например: 65.5)\n\nВаш текущий вес: ${profile.weight_kg} кг`;
+                            } else if (profile.goal === 'gain_mass') {
+                                weightQuestion = `Для составления эффективного плана питания, скажите:\n\n**До какого веса вы хотите набрать массу?** (в кг, например: 80.5)\n\nВаш текущий вес: ${profile.weight_kg} кг`;
+                            } else {
+                                weightQuestion = `Для составления эффективного плана питания, скажите:\n\n**Какой вес для себя вы считаете идеальным для поддержания?** (в кг, например: 70.5)\n\nВаш текущий вес: ${profile.weight_kg} кг`;
+                            }
+
+                            await bot.editMessageText(weightQuestion, {
+                                chat_id, message_id: msg.message_id,
+                                parse_mode: 'Markdown',
+                                reply_markup: null
+                            });
+                        }
                     }
                 }
             }
@@ -5864,8 +5941,8 @@ const setupBot = (app) => {
                     }
                 });
                 state.data.priority_zones = [];
-                        } else if (state.step === 'ask_priority_zones' && subAction === 'zone') {
-                if (value === 'done') {
+            } else if (state.step === 'ask_priority_zones' && subAction === 'zone') {
+                if (value === 'done' || data === 'workout_zones_done') {
                     state.step = 'ask_injuries';
                     await bot.editMessageText('Есть ли у вас травмы или заболевания, влияющие на тренировки?', {
                         chat_id, message_id: msg.message_id,
@@ -5933,34 +6010,30 @@ const setupBot = (app) => {
                         }
                     });
                 }
-            } else if (action === 'workout' && subAction === 'zones' && value === 'done') {
-                // Обработка кнопки "Готово" для выбора зон
-                await bot.answerCallbackQuery(callbackQuery.id);
-                const state = workoutPlanState[telegram_id];
-                if (!state || state.step !== 'ask_priority_zones') {
-                    await bot.editMessageText('Сессия истекла. Пожалуйста, начните заново.', {
-                        chat_id, message_id: msg.message_id
+            } else if (state.step === 'ask_injuries' && subAction === 'injury') {
+                if (value === 'custom') {
+                    // Пользователь выбрал "другие травмы" - ожидаем текст
+                    workoutInjuryState[telegram_id] = { waiting: true };
+                    await bot.editMessageText('Опишите ваши травмы или особенности здоровья:\n\n(например: "проблемы с плечом после травмы")', {
+                        chat_id, message_id: msg.message_id,
+                        reply_markup: null
                     });
-                    return;
-                }
+                } else {
+                    // Сохраняем выбранную травму и переходим к следующему шагу
+                    state.data = { ...state.data, injuries: value };
+                    state.step = 'ask_location';
 
-                // Если ничего не выбрано, устанавливаем "none"
-                if (state.data.priority_zones.length === 0) {
-                    state.data.priority_zones = ['none'];
+                    await bot.editMessageText('Где вы планируете тренироваться?', {
+                        chat_id, message_id: msg.message_id,
+                        reply_markup: {
+                            inline_keyboard: [
+                                [{ text: 'Дома', callback_data: 'workout_location_home' }],
+                                [{ text: 'В зале', callback_data: 'workout_location_gym' }],
+                                [{ text: 'На улице', callback_data: 'workout_location_outdoor' }]
+                            ]
+                        }
+                    });
                 }
-                
-                state.step = 'ask_injuries';
-                await bot.editMessageText('Есть ли у вас травмы или заболевания, влияющие на тренировки?', {
-                    chat_id, message_id: msg.message_id,
-                    reply_markup: {
-                        inline_keyboard: [
-                            [{ text: 'Нет травм', callback_data: 'workout_injury_none' }],
-                            [{ text: 'Проблемы со спиной', callback_data: 'workout_injury_back' }],
-                            [{ text: 'Проблемы с коленями', callback_data: 'workout_injury_knees' }],
-                            [{ text: 'Другие травмы (напишу)', callback_data: 'workout_injury_custom' }]
-                        ]
-                    }
-                });
             } else if (state.step === 'ask_location' && subAction === 'location') {
                 state.data = { ...state.data, location: value };
                 state.step = 'ask_frequency';
@@ -5997,8 +6070,8 @@ const setupBot = (app) => {
                 // Генерируем план тренировок
                 const loadingMessage = await bot.editMessageText('🤖 Создаю персональный план тренировок... Это может занять до 30 секунд.', {
                     chat_id, message_id: msg.message_id,
-                   reply_markup: null
-               });
+                    reply_markup: null
+                });
 
                 try {
                     // Сохраняем данные в базу
@@ -6118,6 +6191,17 @@ const setupBot = (app) => {
                         // ✅ ИНКРЕМЕНТИРУЕМ СЧЕТЧИК ПЛАНОВ ТРЕНИРОВОК
                         await incrementUsage(telegram_id, 'workout_plans');
                         
+                        // ✅ СОХРАНЯЕМ ЦЕЛЕВОЙ ВЕС И ВРЕМЯ В ПРОФИЛЬ
+                        if (state.data.target_weight_kg && state.data.timeframe_months) {
+                            await supabase
+                                .from('profiles')
+                                .update({
+                                    target_weight_kg: state.data.target_weight_kg,
+                                    timeframe_months: state.data.timeframe_months
+                                })
+                                .eq('telegram_id', telegram_id);
+                        }
+                        
                         // Отправляем красивый HTML-документ
                         const currentDate = new Date().toLocaleDateString('ru-RU').replace(/\./g, '_');
                         const htmlContent = generateWorkoutPlanHTML(planResult.plan, state.profileData, state.data);
@@ -6158,23 +6242,23 @@ const setupBot = (app) => {
                 return;
             }
 
-            if (state.step === 'ask_preferences' && subAction === 'pref') {
-                state.data = { ...state.data, preferences: value };
-                state.step = 'ask_activity';
+            if (state.step === 'ask_activity' && subAction === 'activity') {
+                state.data = { ...state.data, activity: value };
+                state.step = 'ask_preferences';
 
-                await bot.editMessageText('Какой у вас тип активности в течение дня?', {
+                await bot.editMessageText('Теперь расскажите о ваших пищевых предпочтениях:', {
                     chat_id, message_id: msg.message_id,
-            reply_markup: {
+                    reply_markup: {
                         inline_keyboard: [
-                            [{ text: '💺 Сидячий образ жизни', callback_data: 'nutrition_activity_sedentary' }],
-                            [{ text: '🚶 Лёгкая активность', callback_data: 'nutrition_activity_light' }],
-                            [{ text: '🏃 Активный образ жизни', callback_data: 'nutrition_activity_active' }],
-                            [{ text: '🏋️ Тяжёлая физическая работа', callback_data: 'nutrition_activity_heavy' }]
+                            [{ text: 'Обычное питание', callback_data: 'nutrition_pref_regular' }],
+                            [{ text: 'Вегетарианство', callback_data: 'nutrition_pref_vegetarian' }],
+                            [{ text: 'Веганство', callback_data: 'nutrition_pref_vegan' }],
+                            [{ text: 'Кето-диета', callback_data: 'nutrition_pref_keto' }]
                         ]
                     }
                 });
-            } else if (state.step === 'ask_activity' && subAction === 'activity') {
-                state.data = { ...state.data, activity: value };
+            } else if (state.step === 'ask_preferences' && subAction === 'pref') {
+                state.data = { ...state.data, preferences: value };
                 state.step = 'ask_allergies';
 
                 await bot.editMessageText('Есть ли у вас пищевые аллергии или непереносимости?', {
@@ -6306,8 +6390,15 @@ const setupBot = (app) => {
                         return;
                     }
                     
+                    // Добавляем целевой вес и время в данные профиля для плана питания
+                    const enrichedProfileData = {
+                        ...state.profileData,
+                        target_weight_kg: state.data.target_weight_kg || state.profileData.target_weight_kg,
+                        timeframe_months: state.data.timeframe_months || state.profileData.timeframe_months
+                    };
+                    
                     // Генерируем план с OpenAI
-                    const planResult = await generateNutritionPlan(state.profileData, state.data);
+                    const planResult = await generateNutritionPlan(enrichedProfileData, state.data);
 
                     if (planResult.success) {
                         // ✅ ИНКРЕМЕНТИРУЕМ СЧЕТЧИК ПЛАНОВ ПИТАНИЯ
