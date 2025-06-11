@@ -2879,6 +2879,243 @@ const sendDailyReports = async () => {
     }
 };
 
+// --- Weekly Reports Functions (VIP Only) ---
+const generateWeeklyReport = async (telegram_id) => {
+    try {
+        // Получаем профиль пользователя
+        const { data: profile, error: profileError } = await supabase
+            .from('profiles')
+            .select('id, first_name, weight_kg, daily_calories, daily_protein, daily_fat, daily_carbs')
+            .eq('telegram_id', telegram_id)
+            .single();
+
+        if (profileError || !profile) {
+            return null; // Пропускаем пользователей без профиля
+        }
+
+        // Проверяем подписку - еженедельные отчеты только для VIP/MAXIMUM
+        const subscription = await getUserSubscription(telegram_id);
+        if (subscription.tier !== 'maximum') {
+            return null; // Еженедельные отчеты только для максимального тарифа
+        }
+
+        // Получаем данные за неделю
+        const today = new Date();
+        const weekStart = new Date(today);
+        weekStart.setDate(today.getDate() - 7);
+        const weekEnd = today;
+
+        // Получаем еду за неделю
+        const { data: weekMeals } = await supabase
+            .from('meals')
+            .select('calories, protein, fat, carbs, description, eaten_at')
+            .eq('user_id', profile.id)
+            .gte('eaten_at', weekStart.toISOString())
+            .lte('eaten_at', weekEnd.toISOString());
+
+        // Получаем воду за неделю
+        const waterStats = await getWaterStats(telegram_id, 'week');
+        
+        // Получаем тренировки за неделю
+        const workoutStats = await getWorkoutTrackingStats(telegram_id, 'week');
+
+        // Подсчитываем средние значения и тенденции
+        const weeklyTotals = weekMeals ? weekMeals.reduce((acc, meal) => {
+            acc.calories += meal.calories || 0;
+            acc.protein += meal.protein || 0;
+            acc.fat += meal.fat || 0;
+            acc.carbs += meal.carbs || 0;
+            return acc;
+        }, { calories: 0, protein: 0, fat: 0, carbs: 0 }) : { calories: 0, protein: 0, fat: 0, carbs: 0 };
+
+        const dailyAverages = {
+            calories: Math.round(weeklyTotals.calories / 7),
+            protein: Math.round(weeklyTotals.protein / 7),
+            fat: Math.round(weeklyTotals.fat / 7),
+            carbs: Math.round(weeklyTotals.carbs / 7)
+        };
+
+        // Формируем отчет
+        let reportText = `📈 **Еженедельный отчет для VIP, ${profile.first_name}!**\n\n`;
+        reportText += `📅 **Период:** ${weekStart.toLocaleDateString('ru-RU')} - ${today.toLocaleDateString('ru-RU')}\n\n`;
+
+        // Анализ питания
+        if (weekMeals && weekMeals.length > 0) {
+            const avgCaloriePercentage = Math.round((dailyAverages.calories / profile.daily_calories) * 100);
+            reportText += `🍽️ **Питание (недельный анализ):**\n`;
+            reportText += `📊 Среднее потребление калорий: ${dailyAverages.calories} / ${profile.daily_calories} (${avgCaloriePercentage}%)\n`;
+            reportText += `${createProgressBar(dailyAverages.calories, profile.daily_calories)}\n\n`;
+
+            reportText += `**Средние БЖУ в день:**\n`;
+            reportText += `🥩 Белки: ${dailyAverages.protein} / ${profile.daily_protein} г\n`;
+            reportText += `🥑 Жиры: ${dailyAverages.fat} / ${profile.daily_fat} г\n`;
+            reportText += `🍞 Углеводы: ${dailyAverages.carbs} / ${profile.daily_carbs} г\n\n`;
+
+            // Анализ по дням недели
+            const dayStats = {};
+            weekMeals.forEach(meal => {
+                const day = new Date(meal.eaten_at).toLocaleDateString('ru-RU');
+                if (!dayStats[day]) {
+                    dayStats[day] = { count: 0, calories: 0 };
+                }
+                dayStats[day].count++;
+                dayStats[day].calories += meal.calories || 0;
+            });
+
+            const activeDays = Object.keys(dayStats).length;
+            reportText += `📈 **Статистика активности:**\n`;
+            reportText += `📅 Дней с записями: ${activeDays} из 7\n`;
+            reportText += `🍽️ Всего записей о еде: ${weekMeals.length}\n\n`;
+        } else {
+            reportText += `🍽️ **Питание:** За неделю не было записей\n\n`;
+        }
+
+        // Анализ воды
+        if (waterStats.success) {
+            const weeklyWaterTotal = Object.values(waterStats.dailyStats).reduce((sum, water) => sum + water, 0);
+            const dailyWaterAverage = Math.round(weeklyWaterTotal / 7);
+            const waterPercentage = Math.round((dailyWaterAverage / waterStats.waterNorm) * 100);
+            
+            reportText += `💧 **Водный баланс:**\n`;
+            reportText += `📊 В среднем в день: ${dailyWaterAverage} / ${waterStats.waterNorm} мл (${waterPercentage}%)\n`;
+            reportText += `${createProgressBar(dailyWaterAverage, waterStats.waterNorm)}\n\n`;
+        }
+
+        // Анализ тренировок
+        if (workoutStats.success && workoutStats.totalCount > 0) {
+            reportText += `💪 **Тренировки:**\n`;
+            reportText += `🏃‍♂️ Всего тренировок: ${workoutStats.totalCount}\n`;
+            reportText += `⏱️ Общее время: ${workoutStats.totalDuration} мин\n`;
+            reportText += `🔥 Сожжено калорий: ~${workoutStats.totalCalories} ккал\n\n`;
+
+            // Прогресс по плану
+            const progressResult = await getWorkoutPlanProgress(telegram_id);
+            if (progressResult.success) {
+                reportText += `📊 **Прогресс по плану тренировок:**\n`;
+                reportText += `${createWorkoutProgressBar(progressResult.completed, progressResult.planned)}\n`;
+                reportText += `Выполнено: ${progressResult.completed} из ${progressResult.planned} на этой неделе\n\n`;
+            }
+        } else {
+            reportText += `💪 **Тренировки:** За неделю не было записей\n\n`;
+        }
+
+        // Еженедельные рекомендации и достижения
+        reportText += `🎯 **Еженедельные итоги:**\n`;
+        
+        let achievements = [];
+        let recommendations = [];
+
+        // Проверяем достижения
+        if (weekMeals && dailyAverages.calories >= profile.daily_calories * 0.8 && dailyAverages.calories <= profile.daily_calories * 1.2) {
+            achievements.push('🎯 Стабильное соблюдение калорийности');
+        }
+        if (waterStats.success && Object.values(waterStats.dailyStats).filter(water => water >= waterStats.waterNorm).length >= 5) {
+            achievements.push('💧 Отличный водный баланс');
+        }
+        if (workoutStats.success && workoutStats.totalCount >= 3) {
+            achievements.push('💪 Регулярные тренировки');
+        }
+
+        // Рекомендации на следующую неделю
+        if (weekMeals && dailyAverages.calories < profile.daily_calories * 0.8) {
+            recommendations.push('🍽️ Увеличить калорийность рациона');
+        }
+        if (!workoutStats.success || workoutStats.totalCount < 3) {
+            recommendations.push('🏃‍♂️ Добавить больше физической активности');
+        }
+        if (waterStats.success && Object.values(waterStats.dailyStats).filter(water => water >= waterStats.waterNorm).length < 4) {
+            recommendations.push('💧 Улучшить водный режим');
+        }
+
+        if (achievements.length > 0) {
+            reportText += `\n🏆 **Достижения недели:**\n`;
+            achievements.forEach(achievement => {
+                reportText += `• ${achievement}\n`;
+            });
+        }
+
+        if (recommendations.length > 0) {
+            reportText += `\n💡 **Рекомендации на следующую неделю:**\n`;
+            recommendations.forEach(recommendation => {
+                reportText += `• ${recommendation}\n`;
+            });
+        }
+
+        reportText += `\n✨ Отличная работа! Продолжайте в том же духе! 🌟`;
+        
+        return reportText;
+
+    } catch (error) {
+        console.error(`Error generating weekly report for ${telegram_id}:`, error);
+        return null;
+    }
+};
+
+const sendWeeklyReports = async () => {
+    try {
+        console.log('📈 Начинаю отправку еженедельных отчетов для VIP...');
+        
+        // Получаем VIP пользователей (maximum tier)
+        const { data: profiles, error: profilesError } = await supabase
+            .from('profiles')
+            .select('telegram_id, first_name, id');
+
+        if (profilesError || !profiles) {
+            console.error('Error fetching profiles for weekly reports:', profilesError);
+            return;
+        }
+
+        // Получаем подписки для фильтрации VIP пользователей
+        const { data: subscriptions, error: subscriptionsError } = await supabase
+            .from('user_subscriptions')
+            .select('user_id, plan')
+            .eq('plan', 'maximum');
+
+        if (subscriptionsError) {
+            console.error('Error fetching VIP subscriptions:', subscriptionsError);
+            return;
+        }
+
+        if (!subscriptions || subscriptions.length === 0) {
+            console.log('Нет VIP пользователей для отправки еженедельных отчетов');
+            return;
+        }
+
+        // Фильтруем VIP пользователей
+        const vipUserIds = subscriptions.map(sub => sub.user_id);
+        const vipUsers = profiles.filter(profile => vipUserIds.includes(profile.id));
+
+        let sentCount = 0;
+        let failedCount = 0;
+
+        for (const user of vipUsers) {
+            try {
+                const report = await generateWeeklyReport(user.telegram_id);
+                
+                if (report) {
+                    await bot.sendMessage(user.telegram_id, report, {
+                        parse_mode: 'Markdown'
+                    });
+                    sentCount++;
+                    console.log(`✅ Еженедельный отчет отправлен VIP пользователю ${user.first_name} (${user.telegram_id})`);
+                    
+                    // Задержка между отправками
+                    await new Promise(resolve => setTimeout(resolve, 150));
+                } else {
+                    console.log(`⚠️ Пропущен VIP пользователь ${user.telegram_id} (нет данных или не VIP)`);
+                }
+            } catch (userError) {
+                failedCount++;
+                console.error(`❌ Ошибка отправки еженедельного отчета VIP пользователю ${user.telegram_id}:`, userError.message);
+            }
+        }
+
+        console.log(`📈 Отправка еженедельных отчетов завершена: ✅ ${sentCount} успешно, ❌ ${failedCount} ошибок`);
+    } catch (error) {
+        console.error('Error in sendWeeklyReports:', error);
+    }
+};
+
 // --- SUBSCRIPTION FUNCTIONS ---
 
 const getUserSubscription = async (telegram_id) => {
@@ -5697,10 +5934,50 @@ const setupBot = (app) => {
                         } catch (e) { /* игнорируем ошибки обновления */ }
                     }, 15000);
 
+                    // 🔒 ПРОВЕРКА ЛИМИТОВ НА ПЛАНЫ ТРЕНИРОВОК
+                    const workoutLimitCheck = await checkActionLimit(telegram_id, 'workout_plans');
+                    if (!workoutLimitCheck.allowed) {
+                        const subscription = await getUserSubscription(telegram_id);
+                        let upgradeText = `🚫 **Лимит планов тренировок исчерпан!**\n\n`;
+                        upgradeText += `📊 Использовано: ${workoutLimitCheck.used}/${workoutLimitCheck.limit} за ${workoutLimitCheck.period}\n\n`;
+                        
+                        if (subscription.tier === 'free' && !subscription.promo_expires_at) {
+                            upgradeText += `🎁 **Попробуйте промо-период:**\n• Дополнительные планы тренировок\n• 3 дня бесплатно\n\n`;
+                            upgradeText += `Или выберите тариф для безлимитного доступа! 🚀`;
+                            
+                            await bot.editMessageText(upgradeText, {
+                                chat_id, message_id: msg.message_id,
+                                parse_mode: 'Markdown',
+                                reply_markup: {
+                                    inline_keyboard: [
+                                        [{ text: '🎁 Активировать промо', callback_data: 'activate_promo' }],
+                                        [{ text: '📋 Тарифы', callback_data: 'subscription_plans' }]
+                                    ]
+                                }
+                            });
+                        } else {
+                            upgradeText += `Выберите подходящий тариф для продолжения! 🚀`;
+                            await bot.editMessageText(upgradeText, {
+                                chat_id, message_id: msg.message_id,
+                                parse_mode: 'Markdown',
+                                reply_markup: {
+                                    inline_keyboard: [
+                                        [{ text: '📋 Посмотреть тарифы', callback_data: 'subscription_plans' }]
+                                    ]
+                                }
+                            });
+                        }
+                        delete workoutPlanState[telegram_id];
+                        return;
+                    }
+                    
                     // Генерируем план с OpenAI
                     const planResult = await generateWorkoutPlan(state.profileData, state.data);
 
                     if (planResult.success) {
+                        // ✅ ИНКРЕМЕНТИРУЕМ СЧЕТЧИК ПЛАНОВ ТРЕНИРОВОК
+                        await incrementUsage(telegram_id, 'workout_plans');
+                        
                         // Отправляем красивый HTML-документ
                         const currentDate = new Date().toLocaleDateString('ru-RU').replace(/\./g, '_');
                         const htmlContent = generateWorkoutPlanHTML(planResult.plan, state.profileData, state.data);
@@ -5867,10 +6144,35 @@ const setupBot = (app) => {
                         } catch (e) { /* игнорируем ошибки обновления */ }
                     }, 15000);
 
+                    // 🔒 ПРОВЕРКА ЛИМИТОВ НА ПЛАНЫ ПИТАНИЯ
+                    const nutritionLimitCheck = await checkActionLimit(telegram_id, 'nutrition_plans');
+                    if (!nutritionLimitCheck.allowed) {
+                        const subscription = await getUserSubscription(telegram_id);
+                        let upgradeText = `🚫 **Лимит планов питания исчерпан!**\n\n`;
+                        upgradeText += `📊 Использовано: ${nutritionLimitCheck.used}/${nutritionLimitCheck.limit} за ${nutritionLimitCheck.period}\n\n`;
+                        upgradeText += `🍽️ Планы питания доступны в тарифах ПРОГРЕСС и МАКСИМУМ!\n\n`;
+                        upgradeText += `Выберите подходящий тариф для продолжения! 🚀`;
+                        
+                        await bot.editMessageText(upgradeText, {
+                            chat_id, message_id: loadingMessage.message_id,
+                            parse_mode: 'Markdown',
+                            reply_markup: {
+                                inline_keyboard: [
+                                    [{ text: '📋 Посмотреть тарифы', callback_data: 'subscription_plans' }]
+                                ]
+                            }
+                        });
+                        delete nutritionPlanState[telegram_id];
+                        return;
+                    }
+                    
                     // Генерируем план с OpenAI
                     const planResult = await generateNutritionPlan(state.profileData, state.data);
 
                     if (planResult.success) {
+                        // ✅ ИНКРЕМЕНТИРУЕМ СЧЕТЧИК ПЛАНОВ ПИТАНИЯ
+                        await incrementUsage(telegram_id, 'nutrition_plans');
+                        
                         // Отправляем красивый HTML-документ
                         const currentDate = new Date().toLocaleDateString('ru-RU').replace(/\./g, '_');
                         const htmlContent = generateNutritionPlanHTML(planResult.plan, state.profileData, state.data);
