@@ -227,6 +227,109 @@ setInterval(() => {
     }
 }, 60000);
 
+// Полная очистка всех состояний пользователя
+const clearUserStates = (telegram_id) => {
+    delete registrationState[telegram_id];
+    delete manualAddState[telegram_id];
+    delete workoutPlanState[telegram_id];
+    delete nutritionPlanState[telegram_id];
+    delete waterInputState[telegram_id];
+    delete profileEditState[telegram_id];
+    delete challengeStepsState[telegram_id];
+    delete workoutInjuryState[telegram_id];
+    delete questionState[telegram_id];
+    delete medicalAnalysisState[telegram_id];
+};
+
+// Умная очистка состояний - закрывает только конфликтующие операции
+const closeConflictingStates = (telegram_id, currentOperation) => {
+    switch (currentOperation) {
+        case 'workout_plan':
+            // Закрываем состояния, которые конфликтуют с планом тренировок
+            delete nutritionPlanState[telegram_id];
+            delete manualAddState[telegram_id];
+            delete waterInputState[telegram_id];
+            delete challengeStepsState[telegram_id];
+            delete questionState[telegram_id];
+            delete medicalAnalysisState[telegram_id];
+            break;
+            
+        case 'nutrition_plan':
+            // Закрываем состояния, которые конфликтуют с планом питания
+            delete workoutPlanState[telegram_id];
+            delete workoutInjuryState[telegram_id];
+            delete manualAddState[telegram_id];
+            delete waterInputState[telegram_id];
+            delete challengeStepsState[telegram_id];
+            delete questionState[telegram_id];
+            delete medicalAnalysisState[telegram_id];
+            break;
+            
+        case 'manual_food_entry':
+            // Закрываем состояния, которые конфликтуют с ручным вводом еды
+            delete workoutPlanState[telegram_id];
+            delete workoutInjuryState[telegram_id];
+            delete nutritionPlanState[telegram_id];
+            delete waterInputState[telegram_id];
+            delete challengeStepsState[telegram_id];
+            delete questionState[telegram_id];
+            delete medicalAnalysisState[telegram_id];
+            break;
+            
+        case 'water_tracking':
+            // Закрываем состояния, которые конфликтуют с отслеживанием воды
+            delete workoutPlanState[telegram_id];
+            delete workoutInjuryState[telegram_id];
+            delete nutritionPlanState[telegram_id];
+            delete manualAddState[telegram_id];
+            delete challengeStepsState[telegram_id];
+            delete questionState[telegram_id];
+            delete medicalAnalysisState[telegram_id];
+            break;
+            
+        case 'challenge_input':
+            // Закрываем состояния, которые конфликтуют с вводом данных челленджа
+            delete workoutPlanState[telegram_id];
+            delete workoutInjuryState[telegram_id];
+            delete nutritionPlanState[telegram_id];
+            delete manualAddState[telegram_id];
+            delete waterInputState[telegram_id];
+            delete questionState[telegram_id];
+            delete medicalAnalysisState[telegram_id];
+            break;
+            
+        case 'question_mode':
+            // Закрываем все активные операции ввода при переходе в режим вопросов
+            delete workoutPlanState[telegram_id];
+            delete workoutInjuryState[telegram_id];
+            delete nutritionPlanState[telegram_id];
+            delete manualAddState[telegram_id];
+            delete waterInputState[telegram_id];
+            delete challengeStepsState[telegram_id];
+            delete medicalAnalysisState[telegram_id];
+            break;
+            
+        case 'workout_injury_input':
+            // Закрываем только конфликтующие операции ввода, но сохраняем workoutPlanState
+            delete nutritionPlanState[telegram_id];
+            delete manualAddState[telegram_id];
+            delete waterInputState[telegram_id];
+            delete challengeStepsState[telegram_id];
+            delete questionState[telegram_id];
+            delete medicalAnalysisState[telegram_id];
+            break;
+            
+        case 'profile_menu':
+            // Полная очистка при переходе в профиль (оставляем как есть)
+            clearUserStates(telegram_id);
+            break;
+            
+        default:
+            // По умолчанию не очищаем ничего, только если явно не указано
+            console.log(`Unknown operation: ${currentOperation}, no state changes`);
+    }
+};
+
 // --- Typing Indicator and Streaming Functions ---
 const showTyping = async (chat_id, duration = 3000) => {
     try {
@@ -3603,6 +3706,8 @@ const setupBot = (app) => {
                 return;
             }
             
+            // Умная очистка - закрываем конфликтующие состояния перед ручным вводом еды
+            closeConflictingStates(telegram_id, 'manual_food_entry');
             manualAddState[telegram_id] = { step: 'awaiting_input' };
             bot.sendMessage(chat_id, 'Введите название блюда и его вес в граммах через запятую.\n\nНапример: `Овсяная каша, 150`', {parse_mode: 'Markdown'});
             return;
@@ -3647,6 +3752,9 @@ const setupBot = (app) => {
                     return;
                 }
 
+                // Умная очистка - закрываем конфликтующие состояния, но сохраняем профильные данные
+                closeConflictingStates(telegram_id, 'workout_plan');
+                
                 // Показываем меню выбора действия
                 bot.sendMessage(chat_id, 'Мне создать новый план тренировок?', {
                     reply_markup: {
@@ -3677,6 +3785,9 @@ const setupBot = (app) => {
                     return;
                 }
 
+                // Умная очистка - закрываем конфликтующие состояния, но сохраняем профильные данные
+                closeConflictingStates(telegram_id, 'nutrition_plan');
+                
                 // Показываем меню выбора действия
                 bot.sendMessage(chat_id, 'Мне создать новый план питания?', {
                     reply_markup: {
@@ -3694,10 +3805,14 @@ const setupBot = (app) => {
             return;
         }
         if (msg.text === '💧 Отслеживание воды') {
+            // Умная очистка для отслеживания воды (кроме других водных операций)
+            closeConflictingStates(telegram_id, 'water_tracking');
             showWaterMenu(chat_id, telegram_id);
             return;
         }
         if (msg.text === '👤 Профиль') {
+            // Полная очистка при переходе в профиль
+            closeConflictingStates(telegram_id, 'profile_menu');
             showProfileMenu(chat_id, telegram_id);
             return;
         }
@@ -5068,6 +5183,8 @@ const setupBot = (app) => {
                     }
                 }
                 
+                // Умная очистка перед вводом данных челленджа
+                closeConflictingStates(telegram_id, 'challenge_input');
                 challengeStepsState[telegram_id] = { waiting: true };
                 await bot.editMessageText(inputPrompt, {
                     chat_id, message_id: msg.message_id,
@@ -5186,6 +5303,8 @@ const setupBot = (app) => {
             
             if (actionType === 'no') {
                 // Пользователь выбрал "Нет" - включаем режим ожидания вопроса
+                // Умная очистка перед переходом в режим вопросов
+                closeConflictingStates(telegram_id, 'question_mode');
                 questionState[telegram_id] = { waiting: true };
                 await bot.editMessageText('Какой у вас вопрос? 🤔\n\nЯ могу помочь с вопросами о питании, калориях, тренировках и здоровом образе жизни.', {
                     chat_id, message_id: msg.message_id,
@@ -5542,6 +5661,8 @@ const setupBot = (app) => {
                 }
             } else if (params[0] === 'custom') {
                 // Включаем режим ожидания ввода количества воды
+                // Умная очистка перед вводом воды (оставляем только водные операции)
+                closeConflictingStates(telegram_id, 'water_tracking');
                 waterInputState[telegram_id] = { waiting: true };
                 await bot.editMessageText('Напишите количество воды в миллилитрах (например, 300):', {
                     chat_id, message_id: msg.message_id,
@@ -6013,6 +6134,8 @@ const setupBot = (app) => {
             } else if (state.step === 'ask_injuries' && subAction === 'injury') {
                 if (value === 'custom') {
                     // Пользователь выбрал "другие травмы" - ожидаем текст
+                    // Умная очистка для ввода травм (сохраняем только workoutPlanState)
+                    closeConflictingStates(telegram_id, 'workout_injury_input');
                     workoutInjuryState[telegram_id] = { waiting: true };
                     await bot.editMessageText('Опишите ваши травмы или особенности здоровья:\n\n(например: "проблемы с плечом после травмы")', {
                         chat_id, message_id: msg.message_id,
