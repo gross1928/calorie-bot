@@ -944,183 +944,7 @@ const analyzeMedicalData = async (medicalText, profileData = null) => {
     }
 };
 
-// --- Workout Tracking Functions ---
-const logWorkout = async (telegram_id, workoutData) => {
-    try {
-        console.log('Logging workout:', workoutData);
-        console.log('Telegram ID:', telegram_id);
-
-        // Преобразуем массив упражнений в строку если это массив
-        const exercisesString = Array.isArray(workoutData.exercises) 
-            ? workoutData.exercises.join(', ') 
-            : workoutData.exercises || '';
-
-        console.log('Exercises string:', exercisesString);
-
-        // Добавляем все необходимые поля для таблицы workout_records
-        const insertData = {
-            telegram_id: String(telegram_id), // Убеждаемся что это строка
-            workout_type: workoutData.workout_type || 'general',
-            duration_minutes: parseInt(workoutData.duration) || 30,
-            exercises: exercisesString, // Добавляем упражнения как строку
-            intensity: workoutData.intensity || 'средняя',
-            calories_burned: parseInt(workoutData.calories_burned) || 0,
-            notes: workoutData.notes || '',
-            date: new Date().toISOString().split('T')[0]
-        };
-
-        console.log('Insert data:', insertData);
-
-        const { data, error } = await supabase
-            .from('workout_records')
-            .insert({
-                ...insertData,
-                created_at: new Date().toISOString()
-            });
-
-        if (error) {
-            console.error('Supabase error details:', error);
-            console.error('Error code:', error.code);
-            console.error('Error message:', error.message);
-            console.error('Error hint:', error.hint);
-            console.error('Error details:', error.details);
-            console.error('Full error object:', JSON.stringify(error, null, 2));
-            throw error;
-        }
-
-        console.log('Successfully inserted workout:', data);
-        return { success: true, data };
-    } catch (error) {
-        console.error('Error logging workout:', error);
-        console.error('Error type:', typeof error);
-        console.error('Error constructor:', error.constructor.name);
-        console.error('Full error:', JSON.stringify(error, null, 2));
-        return { success: false, error: error.message || error.toString() || 'Unknown error' };
-    }
-};
-
-const getWorkoutStats = async (telegram_id, period) => {
-    try {
-        const today = new Date();
-        let startDate;
-
-        switch (period) {
-            case 'today':
-                startDate = new Date(today.setHours(0, 0, 0, 0));
-                break;
-            case 'week':
-                startDate = new Date(today.setDate(today.getDate() - 6));
-                break;
-            case 'month':
-                startDate = new Date(today.setDate(today.getDate() - 29));
-                break;
-            default:
-                startDate = new Date(today.setHours(0, 0, 0, 0));
-        }
-
-        const { data: workoutRecords, error } = await supabase
-            .from('workout_records')
-            .select('*')
-            .eq('telegram_id', telegram_id)
-            .gte('date', startDate.toISOString().split('T')[0])
-            .order('date', { ascending: false });
-
-        if (error) throw error;
-
-        const stats = {
-            totalWorkouts: workoutRecords ? workoutRecords.length : 0,
-            totalDuration: 0,
-            totalCalories: 0,
-            workoutTypes: {},
-            recentWorkouts: workoutRecords ? workoutRecords.slice(0, 5) : []
-        };
-
-        if (workoutRecords && workoutRecords.length > 0) {
-            workoutRecords.forEach(workout => {
-                stats.totalDuration += workout.duration_minutes || 0;
-                stats.totalCalories += workout.calories_burned || 0;
-                
-                const type = workout.workout_type || 'Неизвестно';
-                stats.workoutTypes[type] = (stats.workoutTypes[type] || 0) + 1;
-            });
-        }
-
-        return { success: true, ...stats };
-    } catch (error) {
-        console.error('Error getting workout stats:', error);
-        return { success: false, error: error.message };
-    }
-};
-
-const estimateCaloriesBurned = (workoutType, duration, weight_kg) => {
-    // Примерный расчет калорий на основе типа тренировки, времени и веса
-    const metValues = {
-        'кардио': 7,
-        'силовая': 5,
-        'йога': 3,
-        'пилатес': 3,
-        'бег': 8,
-        'плавание': 6,
-        'велосипед': 6,
-        'ходьба': 3.5,
-        'танцы': 5,
-        'фитнес': 5,
-        'тренажерный зал': 5,
-        'общая': 4.5
-    };
-
-    const workoutTypeLower = workoutType.toLowerCase();
-    let met = metValues['общая']; // значение по умолчанию
-
-    // Поиск соответствующего MET значения
-    for (const [type, value] of Object.entries(metValues)) {
-        if (workoutTypeLower.includes(type)) {
-            met = value;
-            break;
-        }
-    }
-
-    // Формула: калории = MET × вес (кг) × время (часы)
-    const hours = duration / 60;
-    const calories = Math.round(met * weight_kg * hours);
-    
-    return calories;
-};
-
-// --- Workout Tracking Functions ---
-const calculateCaloriesBurned = (workoutType, duration, exercises, profileData) => {
-    // Базовые коэффициенты калорий в минуту для разного веса (70кг базовый)
-    const calorieRates = {
-        'cardio': 8.5,      // Бег, велосипед
-        'strength': 4.5,    // Силовые тренировки
-        'yoga': 2.5,        // Йога, растяжка
-        'hiit': 10.0,       // Высокоинтенсивные тренировки
-        'swimming': 7.0,    // Плавание
-        'walking': 3.5,     // Ходьба
-        'other': 5.0        // Другие виды
-    };
-
-    const weightFactor = profileData?.weight_kg ? profileData.weight_kg / 70 : 1;
-    const baseRate = calorieRates[workoutType] || calorieRates['other'];
-    
-    // Дополнительные калории за конкретные упражнения
-    let exerciseCalories = 0;
-    if (exercises && exercises.length > 0) {
-        exercises.forEach(exercise => {
-            const exerciseName = exercise.toLowerCase();
-            if (exerciseName.includes('отжимани') || exerciseName.includes('push')) {
-                exerciseCalories += 0.5 * (exercise.match(/\d+/) ? parseInt(exercise.match(/\d+/)[0]) : 10);
-            } else if (exerciseName.includes('приседани') || exerciseName.includes('squat')) {
-                exerciseCalories += 0.4 * (exercise.match(/\d+/) ? parseInt(exercise.match(/\d+/)[0]) : 10);
-            } else if (exerciseName.includes('планка') || exerciseName.includes('plank')) {
-                exerciseCalories += 5; // За минуту планки
-            }
-        });
-    }
-
-    const totalCalories = Math.round((baseRate * duration * weightFactor) + exerciseCalories);
-    return Math.max(totalCalories, 10); // Минимум 10 калорий
-};
+// ... rest of the code ...
 
 const addWorkoutRecord = async (telegram_id, workoutData) => {
     try {
@@ -1289,203 +1113,168 @@ const createWorkoutProgressBar = (completed, planned) => {
     return `${filled}${empty} ${percentage}%`;
 };
 
-// --- HTML Document Generation ---
 const generateWorkoutPlanHTML = (planContent, profileData, planData) => {
-    const currentDate = new Date().toLocaleDateString('ru-RU');
-    
-    // Проверяем и нормализуем данные профиля
     const safeProfileData = {
         first_name: profileData?.first_name || 'Пользователь',
-        age: profileData?.age || 'Не указан',
-        height_cm: profileData?.height_cm || 'Не указан',
-        weight_kg: profileData?.weight_kg || 'Не указан',
-        goal: profileData?.goal || 'Не указана'
+        age: profileData?.age || 'не указан',
+        height_cm: profileData?.height_cm || 'не указан',
+        weight_kg: profileData?.weight_kg || 'не указан',
+        goal: profileData?.goal || 'не указана'
     };
-    
-    // Проверяем и нормализуем данные плана
+
     const safePlanData = {
-        experience: planData?.experience || 'Не указан',
-        frequency_per_week: planData?.frequency_per_week || planData?.frequency || 'Не указана'
+        experience: planData?.experience || 'не указан',
+        frequency_per_week: planData?.frequency_per_week || 'не указана'
     };
-    
-    // Парсим контент плана из Markdown в структурированные данные
-    const days = planContent.split('### День').filter(day => day.trim());
-    
+
+    const currentDate = new Date().toLocaleDateString('ru-RU');
+
     let dayCards = '';
-    days.forEach((day, index) => {
-        if (index === 0) return; // Пропускаем первый элемент (заголовок)
-        
-        const lines = day.trim().split('\n');
-        const dayTitle = lines[0].replace(/^\d+\s*-\s*/, '');
-        
-        let exercises = '';
-        let isTable = false;
-        
+    if (planContent && typeof planContent === 'string') {
+        const lines = planContent.split('\n');
+        let currentDay = '';
+        let exercises = [];
+
         lines.forEach(line => {
-            // Очищаем строку от лишних символов
-            const cleanLine = line.trim();
-            
-            if (cleanLine.includes('|') && !cleanLine.includes('Упражнение') && !cleanLine.includes('---') && cleanLine.length > 5) {
-                isTable = true;
-                const parts = cleanLine.split('|').map(p => p.trim()).filter(p => p && p !== '---' && p !== '');
-                if (parts.length >= 4) {
-                    const exerciseName = parts[0].replace(/^\|+|\|+$/g, '').trim() || 'Упражнение';
-                    const sets = parts[1].replace(/^\|+|\|+$/g, '').trim() || '-';
-                    const reps = parts[2].replace(/^\|+|\|+$/g, '').trim() || '-';
-                    const rest = parts[3].replace(/^\|+|\|+$/g, '').trim() || '-';
-                    
-                    exercises += `
-                        <div class="exercise-row">
-                            <span class="exercise-name">${exerciseName}</span>
-                            <span class="exercise-sets">
-                                <span class="exercise-label">Подходы:</span>
-                                <span class="exercise-value">${sets}</span>
-                            </span>
-                            <span class="exercise-reps">
-                                <span class="exercise-label">Повторения:</span>
-                                <span class="exercise-value">${reps}</span>
-                            </span>
-                            <span class="exercise-rest">
-                                <span class="exercise-label">Отдых:</span>
-                                <span class="exercise-value">${rest}</span>
-                            </span>
-                        </div>
-                    `;
+            const trimmedLine = line.trim();
+            if (trimmedLine.includes('День') || trimmedLine.includes('DAY')) {
+                if (currentDay && exercises.length > 0) {
+                    dayCards += `<div class="day-card"><h3>${currentDay}</h3><div class="exercises">${exercises.join('')}</div></div>`;
                 }
-            } else if (cleanLine && !cleanLine.includes('|') && !cleanLine.includes('#') && !cleanLine.includes('**') && cleanLine.length > 3) {
-                // Добавляем обычный текст как описание упражнения
-                exercises += `
-                    <div class="exercise-text">
-                        <p>${cleanLine}</p>
-                    </div>
-                `;
+                currentDay = trimmedLine;
+                exercises = [];
+            } else if (trimmedLine && !trimmedLine.includes('---') && trimmedLine.length > 3) {
+                exercises.push(`<div class="exercise-text">${trimmedLine}</div>`);
             }
         });
-        
-        const dayEmojis = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣'];
-        const dayEmoji = dayEmojis[index - 1] || '📅';
-        
-        dayCards += `
+
+        if (currentDay && exercises.length > 0) {
+            dayCards += `<div class="day-card"><h3>${currentDay}</h3><div class="exercises">${exercises.join('')}</div></div>`;
+        }
+    }
+
+    if (!dayCards) {
+        dayCards = `
             <div class="day-card">
-                <h3>${dayEmoji} День ${index} - ${dayTitle}</h3>
+                <h3>📋 Ваш план тренировок</h3>
                 <div class="exercises">
-                    ${exercises || '<p class="rest-day">🛌 День отдыха - восстановление организма</p>'}
+                    <div class="exercise-text">${planContent || 'План тренировок генерируется...'}</div>
                 </div>
             </div>
         `;
-    });
-    
+    }
+
     return `
-<!DOCTYPE html>
-<html lang="ru">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>💪 Персональный план тренировок</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            padding: 20px;
-            color: #333;
-            line-height: 1.6;
-        }
-        
-        .container {
-            max-width: 900px;
-            margin: 0 auto;
-            background: white;
-            border-radius: 20px;
-            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
-            overflow: hidden;
-        }
-        
-        .header {
-            background: linear-gradient(135deg, #FF6B6B, #4ECDC4);
-            color: white;
-            padding: 40px 30px;
-            text-align: center;
-        }
-        
-        .header h1 {
-            font-size: 2.5rem;
-            margin-bottom: 10px;
-            font-weight: 700;
-        }
-        
-        .header p {
-            font-size: 1.2rem;
-            opacity: 0.9;
-        }
-        
-        .user-info {
-            background: #f8f9fa;
-            padding: 30px;
-            margin: 25px;
-            border-radius: 15px;
-            border: 2px solid #e9ecef;
-        }
-        
-        .user-info h3 {
-            color: #FF6B6B;
-            margin-bottom: 20px;
-            font-size: 1.4rem;
-        }
-        
-        .info-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-            gap: 15px;
-        }
-        
-        .info-item {
-            padding: 15px;
-            background: white;
-            border-radius: 10px;
-            border: 1px solid #dee2e6;
-        }
-        
-        .info-label {
-            font-weight: 600;
-            color: #6c757d;
-            font-size: 0.9rem;
-            margin-bottom: 5px;
-        }
-        
-        .info-value {
-            color: #FF6B6B;
-            font-size: 1.1rem;
-            font-weight: 600;
-        }
-        
-        .day-card {
-            margin: 25px;
-            background: white;
-            border-radius: 15px;
-            border: 2px solid #e9ecef;
-            overflow: hidden;
-            box-shadow: 0 5px 15px rgba(0,0,0,0.08);
-        }
-        
-        .day-card h3 {
-            background: linear-gradient(135deg, #FF6B6B, #4ECDC4);
-            color: white;
-            padding: 20px;
-            margin: 0;
-            font-size: 1.3rem;
-            text-align: center;
-        }
-        
-        .exercises {
-            padding: 25px;
-        }
+    <!DOCTYPE html>
+    <html lang="ru">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>💪 Персональный план тренировок</title>
+        <style>
+            * {
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }
+            
+            body {
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                min-height: 100vh;
+                padding: 20px;
+                color: #333;
+                line-height: 1.6;
+            }
+            
+            .container {
+                max-width: 900px;
+                margin: 0 auto;
+                background: white;
+                border-radius: 20px;
+                box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+                overflow: hidden;
+            }
+            
+            .header {
+                background: linear-gradient(135deg, #FF6B6B, #4ECDC4);
+                color: white;
+                padding: 40px 30px;
+                text-align: center;
+            }
+            
+            .header h1 {
+                font-size: 2.5rem;
+                margin-bottom: 10px;
+                font-weight: 700;
+            }
+            
+            .header p {
+                font-size: 1.2rem;
+                opacity: 0.9;
+            }
+            
+            .user-info {
+                background: #f8f9fa;
+                padding: 30px;
+                margin: 25px;
+                border-radius: 15px;
+                border: 2px solid #e9ecef;
+            }
+            
+            .user-info h3 {
+                color: #FF6B6B;
+                margin-bottom: 20px;
+                font-size: 1.4rem;
+            }
+            
+            .info-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                gap: 15px;
+            }
+            
+            .info-item {
+                padding: 15px;
+                background: white;
+                border-radius: 10px;
+                border: 1px solid #dee2e6;
+            }
+            
+            .info-label {
+                font-weight: 600;
+                color: #6c757d;
+                font-size: 0.9rem;
+                margin-bottom: 5px;
+            }
+            
+            .info-value {
+                color: #FF6B6B;
+                font-size: 1.1rem;
+                font-weight: 600;
+            }
+            
+            .day-card {
+                margin: 25px;
+                background: white;
+                border-radius: 15px;
+                border: 2px solid #e9ecef;
+                overflow: hidden;
+                box-shadow: 0 5px 15px rgba(0,0,0,0.08);
+            }
+            
+            .day-card h3 {
+                background: linear-gradient(135deg, #FF6B6B, #4ECDC4);
+                color: white;
+                padding: 20px;
+                margin: 0;
+                font-size: 1.3rem;
+                text-align: center;
+            }
+            
+            .exercises {
+                padding: 25px;
+            }
         
         .exercise-row {
             display: grid;
@@ -1672,6 +1461,31 @@ const generateNutritionPlanHTML = (planContent, profileData, planData) => {
         if (currentDay && mealItems.length > 0) {
             dailyMeals += generateDayCard(currentDay, mealItems);
         }
+    }
+
+    function generateDayCard(dayTitle, mealItems) {
+        let mealsHtml = '';
+        let currentMeal = '';
+        
+        mealItems.forEach(item => {
+            if (item.meal && item.meal !== currentMeal) {
+                if (currentMeal) mealsHtml += '</div>';
+                mealsHtml += `<div class="meal-title">${item.meal}</div><div class="meal-group">`;
+                currentMeal = item.meal;
+            }
+            mealsHtml += `<div class="meal-item">${item.item}</div>`;
+        });
+        
+        if (currentMeal) mealsHtml += '</div>';
+        
+        return `
+            <div class="day-card">
+                <h3>${dayTitle}</h3>
+                <div class="meals">
+                    ${mealsHtml}
+                </div>
+            </div>
+        `;
     }
 
     if (!dailyMeals) {
@@ -2830,27 +2644,42 @@ const generateDailyReport = async (telegram_id) => {
 
 const sendDailyReports = async () => {
     try {
-        console.log('📊 Начинаю отправку ежедневных отчетов...');
+        console.log('📊 Начинаю отправку ежедневных отчетов для платных пользователей...');
         
-        // Получаем всех пользователей
-        const { data: users, error } = await supabase
+        // Получаем все профили
+        const { data: profiles, error: profilesError } = await supabase
             .from('profiles')
-            .select('telegram_id, first_name');
+            .select('telegram_id, first_name, id');
 
-        if (error) {
-            console.error('Error fetching users for daily reports:', error);
+        if (profilesError || !profiles) {
+            console.error('Error fetching profiles for daily reports:', profilesError);
             return;
         }
 
-        if (!users || users.length === 0) {
-            console.log('Нет пользователей для отправки отчетов');
+        // Получаем подписки для фильтрации пользователей (платные + PROMO с активными демо)
+        const { data: subscriptions, error: subscriptionsError } = await supabase
+            .from('user_subscriptions')
+            .select('user_id, plan, subscription_type, promo_expires_at')
+            .or('plan.in.(progress,maximum),and(subscription_type.eq.PROMO,promo_expires_at.gt.' + new Date().toISOString() + ')');
+
+        if (subscriptionsError) {
+            console.error('Error fetching subscriptions for daily reports:', subscriptionsError);
             return;
         }
+
+        if (!subscriptions || subscriptions.length === 0) {
+            console.log('Нет пользователей с активными подписками для отправки ежедневных отчетов');
+            return;
+        }
+
+        // Фильтруем пользователей с активными подписками (включая PROMO)
+        const activeUserIds = subscriptions.map(sub => sub.user_id);
+        const activeUsers = profiles.filter(profile => activeUserIds.includes(profile.id));
 
         let sentCount = 0;
         let failedCount = 0;
 
-        for (const user of users) {
+        for (const user of activeUsers) {
             try {
                 const report = await generateDailyReport(user.telegram_id);
                 
@@ -2859,7 +2688,7 @@ const sendDailyReports = async () => {
                         parse_mode: 'Markdown'
                     });
                     sentCount++;
-                    console.log(`✅ Отчет отправлен пользователю ${user.first_name} (${user.telegram_id})`);
+                    console.log(`✅ Ежедневный отчет отправлен пользователю ${user.first_name} (${user.telegram_id})`);
                     
                     // Небольшая задержка между отправками, чтобы не превысить лимиты API
                     await new Promise(resolve => setTimeout(resolve, 100));
@@ -2872,7 +2701,7 @@ const sendDailyReports = async () => {
             }
         }
 
-        console.log(`📊 Отправка отчетов завершена: ✅ ${sentCount} успешно, ❌ ${failedCount} ошибок`);
+        console.log(`📊 Отправка ежедневных отчетов завершена: ✅ ${sentCount} успешно, ❌ ${failedCount} ошибок`);
 
     } catch (error) {
         console.error('Error in sendDailyReports:', error);
@@ -2939,109 +2768,193 @@ const generateWeeklyReport = async (telegram_id) => {
         let reportText = `📈 **Еженедельный отчет для VIP, ${profile.first_name}!**\n\n`;
         reportText += `📅 **Период:** ${weekStart.toLocaleDateString('ru-RU')} - ${today.toLocaleDateString('ru-RU')}\n\n`;
 
-        // Анализ питания
-        if (weekMeals && weekMeals.length > 0) {
-            const avgCaloriePercentage = Math.round((dailyAverages.calories / profile.daily_calories) * 100);
-            reportText += `🍽️ **Питание (недельный анализ):**\n`;
-            reportText += `📊 Среднее потребление калорий: ${dailyAverages.calories} / ${profile.daily_calories} (${avgCaloriePercentage}%)\n`;
-            reportText += `${createProgressBar(dailyAverages.calories, profile.daily_calories)}\n\n`;
+        // Рассчитываем показатели по дням недели для детального анализа
+        const dailyStats = {};
+        const dayNames = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота', 'Воскресенье'];
+        
+        for (let i = 0; i < 7; i++) {
+            const day = new Date(weekStart);
+            day.setDate(weekStart.getDate() + i);
+            const dayKey = day.toISOString().split('T')[0];
+            
+            const dayMeals = weekMeals ? weekMeals.filter(meal => {
+                const mealDate = new Date(meal.eaten_at).toISOString().split('T')[0];
+                return mealDate === dayKey;
+            }) : [];
+            
+            dailyStats[dayNames[i]] = {
+                calories: dayMeals.reduce((sum, meal) => sum + (meal.calories || 0), 0),
+                protein: dayMeals.reduce((sum, meal) => sum + (meal.protein || 0), 0),
+                mealsCount: dayMeals.length,
+                waterMl: waterStats.success ? (waterStats.dailyStats[dayKey] || 0) : 0
+            };
+        }
 
-            reportText += `**Средние БЖУ в день:**\n`;
-            reportText += `🥩 Белки: ${dailyAverages.protein} / ${profile.daily_protein} г\n`;
-            reportText += `🥑 Жиры: ${dailyAverages.fat} / ${profile.daily_fat} г\n`;
-            reportText += `🍞 Углеводы: ${dailyAverages.carbs} / ${profile.daily_carbs} г\n\n`;
+        // Анализ соответствия целям
+        const calorieGoalPercent = (dailyAverages.calories / profile.daily_calories) * 100;
+        const proteinGoalPercent = (dailyAverages.protein / profile.daily_protein) * 100;
+        const waterNorm = profile.weight_kg * 35;
+        const avgWater = waterStats.success ? Math.round(Object.values(waterStats.dailyStats).reduce((sum, water) => sum + water, 0) / 7) : 0;
+        const waterGoalPercent = (avgWater / waterNorm) * 100;
 
-            // Анализ по дням недели
-            const dayStats = {};
-            weekMeals.forEach(meal => {
-                const day = new Date(meal.eaten_at).toLocaleDateString('ru-RU');
-                if (!dayStats[day]) {
-                    dayStats[day] = { count: 0, calories: 0 };
-                }
-                dayStats[day].count++;
-                dayStats[day].calories += meal.calories || 0;
-            });
+        // Определяем самый продуктивный день
+        const bestDay = Object.keys(dailyStats).reduce((best, day) => 
+            dailyStats[day].calories > dailyStats[best].calories ? day : best
+        );
 
-            const activeDays = Object.keys(dayStats).length;
-            reportText += `📈 **Статистика активности:**\n`;
-            reportText += `📅 Дней с записями: ${activeDays} из 7\n`;
-            reportText += `🍽️ Всего записей о еде: ${weekMeals.length}\n\n`;
+        // АХУЕННЫЙ АНАЛИЗ ПИТАНИЯ
+        reportText += `🔥 **ДЕТАЛЬНЫЙ АНАЛИЗ ПИТАНИЯ:**\n`;
+        reportText += `📊 Среднесуточно: ${dailyAverages.calories} ккал (${calorieGoalPercent.toFixed(0)}% от цели)\n`;
+        reportText += `${createProgressBar(dailyAverages.calories, profile.daily_calories)}\n`;
+        
+        // Статус по целям
+        if (calorieGoalPercent < 80) {
+            reportText += `⚠️ **НЕДОБОР КАЛОРИЙ!** Нужно +${(profile.daily_calories - dailyAverages.calories).toFixed(0)} ккал/день\n\n`;
+        } else if (calorieGoalPercent > 120) {
+            reportText += `🔴 **ПЕРЕИЗБЫТОК КАЛОРИЙ!** Нужно -${(dailyAverages.calories - profile.daily_calories).toFixed(0)} ккал/день\n\n`;
         } else {
-            reportText += `🍽️ **Питание:** За неделю не было записей\n\n`;
+            reportText += `✅ **ИДЕАЛЬНЫЙ БАЛАНС КАЛОРИЙ!** 🎯\n\n`;
+        }
+
+        reportText += `**Макронутриенты (средние за день):**\n`;
+        reportText += `🥩 Белки: ${dailyAverages.protein}г (${proteinGoalPercent.toFixed(0)}% от нормы)\n`;
+        reportText += `🥑 Жиры: ${dailyAverages.fat}г\n`;
+        reportText += `🍞 Углеводы: ${dailyAverages.carbs}г\n\n`;
+
+        // ДЕТАЛЬНЫЙ АНАЛИЗ ПО ДНЯМ
+        reportText += `📅 **АНАЛИЗ ПО ДНЯМ НЕДЕЛИ:**\n`;
+        Object.keys(dailyStats).forEach(day => {
+            const stats = dailyStats[day];
+            const icon = day === bestDay ? '🏆' : 
+                        stats.calories > profile.daily_calories * 0.8 ? '✅' : 
+                        stats.calories > 0 ? '⚠️' : '❌';
+            const shortDay = day.slice(0, 2);
+            reportText += `${icon} ${shortDay}: ${stats.calories.toFixed(0)} ккал, ${stats.mealsCount} записей, ${stats.waterMl} мл\n`;
+        });
+        reportText += `\n🏆 **Лучший день:** ${bestDay} (${dailyStats[bestDay].calories.toFixed(0)} ккал)\n\n`;
+
+        // АНАЛИЗ ГИДРАТАЦИИ
+        reportText += `💧 **ВОДНЫЙ БАЛАНС:**\n`;
+        reportText += `📊 Среднесуточно: ${avgWater} / ${waterNorm} мл (${waterGoalPercent.toFixed(0)}%)\n`;
+        reportText += `${createProgressBar(avgWater, waterNorm)}\n`;
+        
+        if (waterGoalPercent < 70) {
+            reportText += `🚨 **КРИТИЧЕСКОЕ ОБЕЗВОЖИВАНИЕ!** Пей +${(waterNorm - avgWater).toFixed(0)} мл/день\n\n`;
+        } else if (waterGoalPercent < 90) {
+            reportText += `⚠️ **Недостаток воды!** Добавь +${(waterNorm - avgWater).toFixed(0)} мл/день\n\n`;
+        } else {
+            reportText += `✅ **Отличная гидратация!** 🌊\n\n`;
+        }
+
+        // АНАЛИЗ ФИЗИЧЕСКОЙ АКТИВНОСТИ
+        if (workoutStats.success && workoutStats.totalCount > 0) {
+            reportText += `💪 **ФИЗИЧЕСКАЯ АКТИВНОСТЬ:**\n`;
+            reportText += `🏃‍♂️ Всего тренировок: ${workoutStats.totalCount}\n`;
+            reportText += `⏱️ Общее время: ${workoutStats.totalDuration} мин\n`;
+            reportText += `🔥 Сожжено калорий: ~${workoutStats.totalCalories} ккал\n`;
+            reportText += `📈 В среднем за тренировку: ${(workoutStats.totalCalories / workoutStats.totalCount).toFixed(0)} ккал\n`;
+            
+            if (workoutStats.totalCount >= 5) {
+                reportText += `🔥 **ФЕНОМЕНАЛЬНАЯ АКТИВНОСТЬ!** Ты машина! 💪\n\n`;
+            } else if (workoutStats.totalCount >= 3) {
+                reportText += `✅ **Отличная активность!** Продолжай! 💪\n\n`;
+            } else {
+                reportText += `⚡ **Хорошее начало!** Можно добавить еще тренировок 💪\n\n`;
+            }
+        } else {
+            reportText += `💪 **ФИЗИЧЕСКАЯ АКТИВНОСТЬ:**\n`;
+            reportText += `❌ За неделю не было записей о тренировках\n`;
+            reportText += `🎯 **СРОЧНО НУЖНО:** Добавить 2-3 тренировки в неделю!\n\n`;
+        }
+
+        // АХУЕННЫЕ ПЕРСОНАЛЬНЫЕ РЕКОМЕНДАЦИИ
+        reportText += `🧠 **ПЕРСОНАЛЬНЫЕ РЕКОМЕНДАЦИИ ДЛЯ МАКСИМАЛЬНОГО РЕЗУЛЬТАТА:**\n\n`;
+
+        // Анализ калорий
+        if (calorieGoalPercent < 80) {
+            reportText += `🔥 **ПИТАНИЕ:** Ты недоедаешь на ${(profile.daily_calories - dailyAverages.calories).toFixed(0)} ккал/день!\n`;
+            reportText += `💡 **Действия:** Добавь орехи (300 ккал), авокадо (200 ккал), оливковое масло (100 ккал)\n`;
+            reportText += `⚠️ **Риск:** Замедление метаболизма, потеря мышечной массы\n\n`;
+        } else if (calorieGoalPercent > 120) {
+            reportText += `🔥 **ПИТАНИЕ:** Переизбыток ${(dailyAverages.calories - profile.daily_calories).toFixed(0)} ккал/день!\n`;
+            reportText += `💡 **Действия:** Убери быстрые углеводы, уменьши порции на 20%\n`;
+            reportText += `⚠️ **Риск:** Набор лишнего веса, замедление прогресса\n\n`;
+        } else {
+            reportText += `🔥 **ПИТАНИЕ:** Идеальный баланс! Ты мастер контроля калорий! 🎯\n\n`;
+        }
+
+        // Анализ белков
+        if (proteinGoalPercent < 80) {
+            reportText += `🥩 **БЕЛКИ:** Критический недостаток! Нужно +${(profile.daily_protein - dailyAverages.protein).toFixed(0)}г/день\n`;
+            reportText += `💡 **Источники:** Курица (150г = 30г белка), творог (100г = 18г), яйца (2шт = 12г)\n`;
+            reportText += `⚠️ **Риск:** Потеря мышечной массы, медленное восстановление\n\n`;
+        } else if (proteinGoalPercent > 150) {
+            reportText += `🥩 **БЕЛКИ:** Переизбыток белка, сбалансируй с углеводами\n`;
+            reportText += `💡 **Действия:** Добавь сложные углеводы: гречку, овсянку, киноа\n\n`;
+        } else {
+            reportText += `🥩 **БЕЛКИ:** Отличное потребление! Мышцы скажут спасибо! 💪\n\n`;
         }
 
         // Анализ воды
-        if (waterStats.success) {
-            const weeklyWaterTotal = Object.values(waterStats.dailyStats).reduce((sum, water) => sum + water, 0);
-            const dailyWaterAverage = Math.round(weeklyWaterTotal / 7);
-            const waterPercentage = Math.round((dailyWaterAverage / waterStats.waterNorm) * 100);
-            
-            reportText += `💧 **Водный баланс:**\n`;
-            reportText += `📊 В среднем в день: ${dailyWaterAverage} / ${waterStats.waterNorm} мл (${waterPercentage}%)\n`;
-            reportText += `${createProgressBar(dailyWaterAverage, waterStats.waterNorm)}\n\n`;
+        if (waterGoalPercent < 70) {
+            reportText += `💧 **ВОДА:** КРИТИЧЕСКОЕ ОБЕЗВОЖИВАНИЕ! Пей ${((waterNorm - avgWater)).toFixed(0)} мл больше!\n`;
+            reportText += `💡 **Лайфхак:** Ставь напоминания каждый час, купи красивую бутылку\n`;
+            reportText += `⚠️ **Риск:** Замедление метаболизма, ухудшение состояния кожи\n\n`;
+        } else if (waterGoalPercent < 90) {
+            reportText += `💧 **ВОДА:** Недостаток воды! Добавь ${((waterNorm - avgWater)).toFixed(0)} мл/день\n`;
+            reportText += `💡 **Совет:** Начинай день со стакана воды, пей перед каждым приемом пищи\n\n`;
+        } else {
+            reportText += `💧 **ВОДА:** ШИКАРНАЯ ГИДРАТАЦИЯ! Ты водяной гуру! 🌊\n\n`;
         }
 
         // Анализ тренировок
-        if (workoutStats.success && workoutStats.totalCount > 0) {
-            reportText += `💪 **Тренировки:**\n`;
-            reportText += `🏃‍♂️ Всего тренировок: ${workoutStats.totalCount}\n`;
-            reportText += `⏱️ Общее время: ${workoutStats.totalDuration} мин\n`;
-            reportText += `🔥 Сожжено калорий: ~${workoutStats.totalCalories} ккал\n\n`;
-
-            // Прогресс по плану
-            const progressResult = await getWorkoutPlanProgress(telegram_id);
-            if (progressResult.success) {
-                reportText += `📊 **Прогресс по плану тренировок:**\n`;
-                reportText += `${createWorkoutProgressBar(progressResult.completed, progressResult.planned)}\n`;
-                reportText += `Выполнено: ${progressResult.completed} из ${progressResult.planned} на этой неделе\n\n`;
-            }
+        if (!workoutStats.success || workoutStats.totalCount === 0) {
+            reportText += `🏋️ **ТРЕНИРОВКИ:** Тревожный звонок! Нужна СРОЧНАЯ активность!\n`;
+            reportText += `💡 **Старт:** 3 тренировки по 30 мин: понедельник, среда, пятница\n`;
+            reportText += `🎯 **Цель:** Кардио (сжигание жира) + силовые (рост мышц)\n\n`;
+        } else if (workoutStats.totalCount < 3) {
+            reportText += `🏋️ **ТРЕНИРОВКИ:** Добавь еще ${3 - workoutStats.totalCount} тренировки в неделю\n`;
+            reportText += `💡 **Совет:** Чередуй кардио и силовые, не забывай про разминку\n\n`;
         } else {
-            reportText += `💪 **Тренировки:** За неделю не было записей\n\n`;
+            reportText += `🏋️ **ТРЕНИРОВКИ:** ВЕЛИКОЛЕПНАЯ АКТИВНОСТЬ! Ты настоящий спортсмен! 🔥\n`;
+            if (workoutStats.totalCount > 5) {
+                reportText += `💡 **Важно:** Не забывай о днях отдыха для восстановления мышц\n\n`;
+            }
         }
 
-        // Еженедельные рекомендации и достижения
-        reportText += `🎯 **Еженедельные итоги:**\n`;
+        // ПЛАН НА РОСТ И ДОСТИЖЕНИЕ ЦЕЛЕЙ
+        reportText += `🎯 **СТРАТЕГИЧЕСКИЙ ПЛАН НА СЛЕДУЮЩУЮ НЕДЕЛЮ:**\n`;
         
-        let achievements = [];
-        let recommendations = [];
-
-        // Проверяем достижения
-        if (weekMeals && dailyAverages.calories >= profile.daily_calories * 0.8 && dailyAverages.calories <= profile.daily_calories * 1.2) {
-            achievements.push('🎯 Стабильное соблюдение калорийности');
-        }
-        if (waterStats.success && Object.values(waterStats.dailyStats).filter(water => water >= waterStats.waterNorm).length >= 5) {
-            achievements.push('💧 Отличный водный баланс');
-        }
-        if (workoutStats.success && workoutStats.totalCount >= 3) {
-            achievements.push('💪 Регулярные тренировки');
-        }
-
-        // Рекомендации на следующую неделю
-        if (weekMeals && dailyAverages.calories < profile.daily_calories * 0.8) {
-            recommendations.push('🍽️ Увеличить калорийность рациона');
-        }
-        if (!workoutStats.success || workoutStats.totalCount < 3) {
-            recommendations.push('🏃‍♂️ Добавить больше физической активности');
-        }
-        if (waterStats.success && Object.values(waterStats.dailyStats).filter(water => water >= waterStats.waterNorm).length < 4) {
-            recommendations.push('💧 Улучшить водный режим');
-        }
-
-        if (achievements.length > 0) {
-            reportText += `\n🏆 **Достижения недели:**\n`;
-            achievements.forEach(achievement => {
-                reportText += `• ${achievement}\n`;
-            });
+        if (profile.goal === 'lose') {
+            const weeklyDeficit = (profile.daily_calories - dailyAverages.calories) * 7;
+            const predictedWeightLoss = weeklyDeficit / 7700; // 1 кг = 7700 ккал
+            
+            reportText += `📉 **ЦЕЛЬ: ПОХУДЕНИЕ**\n`;
+            if (predictedWeightLoss > 0) {
+                reportText += `📊 Прогноз потери веса: ${predictedWeightLoss.toFixed(2)} кг/неделю\n`;
+            }
+            reportText += `• 🔥 Дефицит 300-500 ккал/день (не больше!)\n`;
+            reportText += `• 🥩 Белки: ${(profile.weight_kg * 1.6).toFixed(0)}г/день для сохранения мышц\n`;
+            reportText += `• 🏃‍♂️ Кардио 3-4 раза по 30-45 мин\n`;
+            reportText += `• 💪 Силовые 2-3 раза для поддержания метаболизма\n`;
+        } else if (profile.goal === 'gain') {
+            reportText += `📈 **ЦЕЛЬ: НАБОР МАССЫ**\n`;
+            reportText += `• 🔥 Профицит 300-500 ккал/день\n`;
+            reportText += `• 🥩 Белки: ${(profile.weight_kg * 1.8).toFixed(0)}г/день для роста мышц\n`;
+            reportText += `• 💪 Силовые 4-5 раз в неделю (прогрессия нагрузок!)\n`;
+            reportText += `• 🏃‍♂️ Кардио 1-2 раза для здоровья сердца\n`;
+        } else {
+            reportText += `⚖️ **ЦЕЛЬ: ПОДДЕРЖАНИЕ ФОРМЫ**\n`;
+            reportText += `• 🔥 Баланс калорий (поддерживающая калорийность)\n`;
+            reportText += `• 🥩 Белки: ${(profile.weight_kg * 1.4).toFixed(0)}г/день\n`;
+            reportText += `• 💪 Силовые 3 раза в неделю\n`;
+            reportText += `• 🏃‍♂️ Кардио 2-3 раза в неделю\n`;
         }
 
-        if (recommendations.length > 0) {
-            reportText += `\n💡 **Рекомендации на следующую неделю:**\n`;
-            recommendations.forEach(recommendation => {
-                reportText += `• ${recommendation}\n`;
-            });
-        }
-
-        reportText += `\n✨ Отличная работа! Продолжайте в том же духе! 🌟`;
+        reportText += `\n🏆 **${profile.first_name}, ты делаешь НЕВЕРОЯТНУЮ работу!**\n`;
+        reportText += `💎 **Твоя дисциплина - это твоя суперсила!**\n`;
+        reportText += `🚀 **Продолжай двигаться к цели, результат не заставит себя ждать!**\n`;
+        reportText += `📱 **До встречи в следующем недельном VIP отчете!** ✨`;
         
         return reportText;
 
@@ -3258,14 +3171,16 @@ const checkActionLimit = async (telegram_id, action) => {
 
     // Переименованные тарифы: free, progress, maximum
     const limits = {
-        free: { photos_processed: 2, ai_questions: 5, workout_plans: 1 },
-        promo: { photos_processed: 15, ai_questions: 20, workout_plans: 1 },
-        progress: { photos_processed: -1, ai_questions: -1, workout_plans: -1, nutrition_plans: -1 },
-        maximum: { photos_processed: -1, ai_questions: -1, workout_plans: -1, nutrition_plans: -1, voice_messages: -1, medical_analysis: -1 }
+        free: { photos_processed: 2, ai_questions: 5, workout_plans: 1, manual_entries: 5 },
+        promo: { photos_processed: 15, ai_questions: 20, workout_plans: 1, nutrition_plans: 1, voice_messages: 3, manual_entries: 15 },
+        progress: { photos_processed: -1, ai_questions: -1, workout_plans: -1, nutrition_plans: -1, manual_entries: -1 },
+        maximum: { photos_processed: -1, ai_questions: -1, workout_plans: -1, nutrition_plans: -1, voice_messages: -1, medical_analysis: -1, manual_entries: -1 }
     };
 
     let userLimits;
-    if (subscription.tier === 'free' && isPromoActive) {
+    if (subscription.subscription_type === 'PROMO' && isPromoActive) {
+        userLimits = limits.promo;
+    } else if (subscription.tier === 'free' && isPromoActive) {
         userLimits = limits.promo;
     } else {
         // Поддержка старых названий на всякий случай
@@ -3637,6 +3552,40 @@ const setupBot = (app) => {
             return;
         }
         if (msg.text === '✍️ Добавить вручную') {
+            // 🔒 ПРОВЕРКА ЛИМИТОВ НА РУЧНОЙ ВВОД ЕДЫ
+            const limitCheck = await checkActionLimit(telegram_id, 'manual_entries');
+            if (!limitCheck.allowed) {
+                const subscription = await getUserSubscription(telegram_id);
+                let upgradeText = `🚫 **Лимит ручного ввода блюд исчерпан!**\n\n`;
+                upgradeText += `📊 Использовано: ${limitCheck.used}/${limitCheck.limit} за ${limitCheck.period}\n\n`;
+                
+                if (subscription.tier === 'free' && !subscription.promo_expires_at) {
+                    upgradeText += `🎁 **Попробуйте промо-период:**\n• 15 ручных записей в день\n• 3 дня бесплатно\n\n`;
+                    upgradeText += `Или выберите тариф для безлимитного доступа! 🚀`;
+                    
+                    await bot.sendMessage(chat_id, upgradeText, {
+                        parse_mode: 'Markdown',
+                        reply_markup: {
+                            inline_keyboard: [
+                                [{ text: '🎁 Активировать промо', callback_data: 'activate_promo' }],
+                                [{ text: '📋 Тарифы', callback_data: 'subscription_plans' }]
+                            ]
+                        }
+                    });
+                } else {
+                    upgradeText += `Выберите подходящий тариф для продолжения! 🚀`;
+                    await bot.sendMessage(chat_id, upgradeText, {
+                        parse_mode: 'Markdown',
+                        reply_markup: {
+                            inline_keyboard: [
+                                [{ text: '📋 Посмотреть тарифы', callback_data: 'subscription_plans' }]
+                            ]
+                        }
+                    });
+                }
+                return;
+            }
+            
             manualAddState[telegram_id] = { step: 'awaiting_input' };
             bot.sendMessage(chat_id, 'Введите название блюда и его вес в граммах через запятую.\n\nНапример: `Овсяная каша, 150`', {parse_mode: 'Markdown'});
             return;
@@ -3664,6 +3613,20 @@ const setupBot = (app) => {
 
                 if (error || !profile) {
                     bot.sendMessage(chat_id, 'Сначала нужно пройти регистрацию. Нажмите /start');
+                    return;
+                }
+
+                // Проверяем тариф пользователя  
+                const subscription = await getUserSubscription(telegram_id);
+                if (subscription.subscription_type === 'FREE') {
+                    bot.sendMessage(chat_id, '💪 *План тренировок недоступен на бесплатном тарифе*\n\nДля доступа к персональным планам тренировок требуется подписка.', {
+                        parse_mode: 'Markdown',
+                        reply_markup: {
+                            inline_keyboard: [
+                                [{ text: '💎 Посмотреть тарифы', callback_data: 'show_subscription_plans' }]
+                            ]
+                        }
+                    });
                     return;
                 }
 
@@ -4879,6 +4842,113 @@ const setupBot = (app) => {
         
         console.log(`>>> CALLBACK: User: ${telegram_id}, Data: ${data}, Action: ${action}, Params: ${params}`);
         
+        // --- Subscription Callbacks ---
+        if (data === 'show_subscription_plans') {
+            await bot.answerCallbackQuery(callbackQuery.id);
+            
+            const subscriptionText = `💎 **ТАРИФНЫЕ ПЛАНЫ**\n\n` +
+                `🆓 **БЕСПЛАТНЫЙ**\n` +
+                `• 2 фото в день\n` +
+                `• 5 AI вопросов в день\n` +
+                `• 5 ручных записей еды в день\n` +
+                `• Статистика только за сегодня\n\n` +
+                
+                `⭐ **ДЕМО (3 дня бесплатно)**\n` +
+                `• 15 фото в день\n` +
+                `• 20 AI вопросов в день\n` +
+                `• 15 ручных записей еды в день\n` +
+                `• 3 голосовых сообщения в день\n` +
+                `• 1 план питания в месяц\n` +
+                `• Статистика за день и неделю\n` +
+                `• Ежедневные VIP отчеты\n\n` +
+                
+                `🚀 **ПРОГРЕСС** - 199₽/мес\n` +
+                `• Безлимитные фото и AI\n` +
+                `• Безлимитные ручные записи\n` +
+                `• Безлимитные планы тренировок и питания\n` +
+                `• Полная статистика\n` +
+                `• Ежедневные отчеты\n\n` +
+                
+                `👑 **УЛЬТРА** - 349₽/мес\n` +
+                `• Всё из тарифа ПРОГРЕСС\n` +
+                `• Голосовые сообщения\n` +
+                `• Анализ медицинских данных\n` +
+                `• Еженедельные VIP отчеты с детальными рекомендациями\n`;
+
+            await bot.editMessageText(subscriptionText, {
+                chat_id, message_id: msg.message_id,
+                parse_mode: 'Markdown',
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: '🎁 ДЕМО-ДОСТУП НА 3 ДНЯ', callback_data: 'activate_demo' }],
+                        [{ text: '🚀 ПРОГРЕСС 199₽/мес', callback_data: 'subscribe_progress' }],
+                        [{ text: '👑 УЛЬТРА 349₽/мес', callback_data: 'subscribe_ultra' }]
+                    ]
+                }
+            });
+            return;
+        }
+
+        if (data === 'activate_demo') {
+            await bot.answerCallbackQuery(callbackQuery.id);
+            
+            const subscription = await getUserSubscription(telegram_id);
+            if (subscription.subscription_type !== 'FREE') {
+                await bot.editMessageText('У вас уже есть активная подписка! 😊', {
+                    chat_id, message_id: msg.message_id
+                });
+                return;
+            }
+
+            // Проверяем, не использовал ли уже пользователь демо
+            const { data: existingPromo, error } = await supabase
+                .from('user_subscriptions')
+                .select('*')
+                .eq('telegram_id', telegram_id)
+                .in('subscription_type', ['PROMO'])
+                .single();
+
+            if (existingPromo && !error) {
+                await bot.editMessageText('Демо-доступ можно использовать только один раз 😔\n\nВыберите платную подписку для продолжения использования премиум функций.', {
+                    chat_id, message_id: msg.message_id,
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: '🚀 ПРОГРЕСС 199₽/мес', callback_data: 'subscribe_progress' }],
+                            [{ text: '👑 УЛЬТРА 349₽/мес', callback_data: 'subscribe_ultra' }]
+                        ]
+                    }
+                });
+                return;
+            }
+
+            // Активируем промо
+            const result = await activatePromo(telegram_id);
+            if (result.success) {
+                await bot.editMessageText('🎉 *Демо-доступ активирован на 3 дня!*\n\n✨ Теперь вам доступны:\n• Голосовые сообщения (3 в день)\n• План питания\n• Ежедневные VIP отчеты\n• Расширенная статистика\n\nПриятного использования!', {
+                    chat_id, message_id: msg.message_id,
+                    parse_mode: 'Markdown'
+                });
+            } else {
+                await bot.editMessageText(`❌ Ошибка активации: ${result.error}`, {
+                    chat_id, message_id: msg.message_id
+                });
+            }
+            return;
+        }
+
+        if (data === 'subscribe_progress' || data === 'subscribe_ultra') {
+            await bot.answerCallbackQuery(callbackQuery.id);
+            
+            const planName = data === 'subscribe_progress' ? 'ПРОГРЕСС' : 'УЛЬТРА';
+            const price = data === 'subscribe_progress' ? '199₽' : '349₽';
+            
+            await bot.editMessageText(`💳 Для оформления подписки "${planName}" (${price}/мес) свяжитесь с администратором:\n\n@your_admin_username\n\nПосле оплаты ваш тариф будет активирован в течение 1 часа.`, {
+                chat_id, message_id: msg.message_id,
+                parse_mode: 'Markdown'
+            });
+            return;
+        }
+
         // --- Challenge Callbacks ---
         if (data.startsWith('challenge_')) {
             await bot.answerCallbackQuery(callbackQuery.id);
@@ -5499,6 +5569,15 @@ const setupBot = (app) => {
                     if (mealError) throw mealError;
 
                     console.log(`✅ Еда успешно сохранена для пользователя ${meal_telegram_id}`);
+                    
+                    // 📊 УЧЕТ ИСПОЛЬЗОВАНИЯ ЛИМИТОВ
+                    if (meal_type === 'manual') {
+                        await incrementUsage(meal_telegram_id, 'manual_entries');
+                        console.log(`📊 Увеличен счетчик ручного ввода для пользователя ${meal_telegram_id}`);
+                    } else if (meal_type === 'photo') {
+                        // Уже учтено в обработке фото
+                        console.log(`📊 Фото уже учтено для пользователя ${meal_telegram_id}`);
+                    }
 
                     await bot.editMessageText(`✅ Сохранено: ${dish_name} (${calories} ккал).`, {
                         chat_id, message_id: msg.message_id, reply_markup: null
@@ -5521,6 +5600,67 @@ const setupBot = (app) => {
         if (action === 'stats') {
             const period = params[0];
             await bot.answerCallbackQuery(callbackQuery.id);
+
+            // 🔒 ПРОВЕРКА ДОСТУПА К СТАТИСТИКЕ ПО ТАРИФАМ
+            const subscription = await getUserSubscription(telegram_id);
+            const tier = subscription.tier;
+            
+            // Проверяем разрешение на просмотр статистики за определенный период
+            if (period === 'week' && tier === 'free') {
+                let upgradeText = `🚫 **Недельная статистика доступна только с тарифами PROMO и выше!**\n\n`;
+                upgradeText += `📊 **Что вы получите:**\n`;
+                upgradeText += `• Статистика за неделю и месяц\n`;
+                upgradeText += `• Детальная аналитика прогресса\n`;
+                upgradeText += `• Графики и тренды\n\n`;
+                
+                if (!subscription.promo_expires_at) {
+                    upgradeText += `🎁 **Попробуйте промо-период бесплатно!**`;
+                    
+                    await bot.editMessageText(upgradeText, {
+                        chat_id, message_id: msg.message_id,
+                        parse_mode: 'Markdown',
+                        reply_markup: {
+                            inline_keyboard: [
+                                [{ text: '🎁 Активировать промо', callback_data: 'activate_promo' }],
+                                [{ text: '📋 Посмотреть тарифы', callback_data: 'subscription_plans' }]
+                            ]
+                        }
+                    });
+                } else {
+                    upgradeText += `Выберите подходящий тариф для продолжения! 🚀`;
+                    await bot.editMessageText(upgradeText, {
+                        chat_id, message_id: msg.message_id,
+                        parse_mode: 'Markdown',
+                        reply_markup: {
+                            inline_keyboard: [
+                                [{ text: '📋 Посмотреть тарифы', callback_data: 'subscription_plans' }]
+                            ]
+                        }
+                    });
+                }
+                return;
+            }
+            
+            if (period === 'month' && (tier === 'free' || tier === 'promo')) {
+                let upgradeText = `🚫 **Месячная статистика доступна только с тарифами PROGRESS и выше!**\n\n`;
+                upgradeText += `📊 **Что вы получите:**\n`;
+                upgradeText += `• Статистика за месяц и год\n`;
+                upgradeText += `• Безлимитный анализ еды\n`;
+                upgradeText += `• Планы тренировок и питания\n`;
+                upgradeText += `• Ежедневные отчеты\n\n`;
+                upgradeText += `Выберите подходящий тариф для продолжения! 🚀`;
+                
+                await bot.editMessageText(upgradeText, {
+                    chat_id, message_id: msg.message_id,
+                    parse_mode: 'Markdown',
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: '📋 Посмотреть тарифы', callback_data: 'subscription_plans' }]
+                        ]
+                    }
+                });
+                return;
+            }
 
             try {
                 const { data: profile, error: profileError } = await supabase
