@@ -296,31 +296,43 @@ const formatAIResponse = (text) => {
     // Добавляем разделители и структуру
     let formatted = text;
     
+    // Убираем ### символы из заголовков
+    formatted = formatted.replace(/^###\s*/gm, '');
+    formatted = formatted.replace(/^####\s*/gm, '');
+    
     // Заменяем обычные переносы на двойные для лучшего разделения
     formatted = formatted.replace(/\n([А-Я])/g, '\n\n$1');
     
-    // Выделяем важные моменты черным фоном (моноширинный шрифт)
-    formatted = formatted.replace(/([0-9,]+\s*(ккал|кг|г|мл|км|мин|раз|подход|день|неделя|месяц))/gi, '`$1`');
-    formatted = formatted.replace(/(калория|калории|калорий|белки|жиры|углеводы|КБЖУ|БЖУ)/gi, '`$1`');
-    formatted = formatted.replace(/(завтрак|обед|ужин|перекус)/gi, '`$1`');
+    // Выделяем важные числа жирным шрифтом (убираем серое выделение)
+    formatted = formatted.replace(/([0-9,]+[\-\s]*[0-9,]*)\s*(ккал|калори[ийя]|кг|км|мин|раз|подход|день|недел[ьяи]|месяц[аов]?)/gi, '**$1 $2**');
     
-    // Делаем жирными важные заголовки
-    formatted = formatted.replace(/^([А-Я][^:]*:)/gm, '**$1**');
+    // Выделяем важные термины жирным
+    formatted = formatted.replace(/(белк[иоа]|жир[ыаи]|углевод[ыаи]|КБЖУ|БЖУ)/gi, '**$1**');
+    formatted = formatted.replace(/(завтрак|обед|ужин|перекус)/gi, '**$1**');
+    
+    // Делаем жирными важные заголовки и добавляем эмодзи
+    formatted = formatted.replace(/^(Питание|Рацион|Диета):/gmi, '🍽️ **$1:**');
+    formatted = formatted.replace(/^(Тренировки|Упражнения|Активность):/gmi, '💪 **$1:**'); 
+    formatted = formatted.replace(/^(Рекомендации|Советы):/gmi, '💡 **$1:**');
+    formatted = formatted.replace(/^(Важно|Внимание):/gmi, '⚠️ **$1:**');
+    formatted = formatted.replace(/^(Здоровье|Самочувствие):/gmi, '🏥 **$1:**');
+    formatted = formatted.replace(/^(Результат|Итог|Заключение):/gmi, '🎯 **$1:**');
+    formatted = formatted.replace(/^(Распределение КБЖУ|КБЖУ|БЖУ):/gmi, '📊 **$1:**');
+    
+    // Делаем жирными все остальные заголовки с двоеточием
+    formatted = formatted.replace(/^([А-Я][^:\n]*):(?!\s*\*\*)/gm, '**$1:**');
     
     // Улучшаем списки
     formatted = formatted.replace(/^- /gm, '• ');
     formatted = formatted.replace(/^(\d+)\. /gm, '**$1.** ');
     
-    // Добавляем эмодзи для разделов
-    formatted = formatted.replace(/\*\*(Рекомендации|Советы|Важно|Внимание)\*\*/gi, '💡 **$1**');
-    formatted = formatted.replace(/\*\*(Питание|Рацион|Диета)\*\*/gi, '🍽️ **$1**');
-    formatted = formatted.replace(/\*\*(Тренировки|Упражнения|Активность)\*\*/gi, '💪 **$1**');
-    formatted = formatted.replace(/\*\*(Здоровье|Самочувствие)\*\*/gi, '🏥 **$1**');
-    formatted = formatted.replace(/\*\*(Результат|Итог|Заключение)\*\*/gi, '🎯 **$1**');
+    // Выделяем процентные соотношения
+    formatted = formatted.replace(/(\d+)-(\d+)%/g, '**$1-$2%**');
+    formatted = formatted.replace(/(\d+)%/g, '**$1%**');
     
     // Добавляем красивую рамку для длинных ответов (более 200 символов)
     if (formatted.length > 200) {
-        formatted = `┌──────────────────────────┐\n│  🤖 **ПЕРСОНАЛЬНЫЙ ОТВЕТ**  │\n└──────────────────────────┘\n\n${formatted}\n\n─────────────────────────\n💬 *Есть ещё вопросы? Спрашивайте!*`;
+        formatted = `┌─────────────────────────────┐\n│  🤖 **ПЕРСОНАЛЬНЫЙ ОТВЕТ**  │\n└─────────────────────────────┘\n\n${formatted}\n\n─────────────────────────\n💬 *Есть ещё вопросы? Спрашивайте!*`;
     }
     
     return formatted;
@@ -1366,7 +1378,248 @@ const generateWorkoutPlanHTML = (planContent, profileData, planData) => {
     return `
 <!DOCTYPE html>
 <html lang="ru">
-```
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>💪 Персональный план тренировок</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+            color: #333;
+            line-height: 1.6;
+        }
+        
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #FF6B6B, #4ECDC4);
+            color: white;
+            padding: 40px 30px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            font-weight: 700;
+        }
+        
+        .header p {
+            font-size: 1.2rem;
+            opacity: 0.9;
+        }
+        
+        .user-info {
+            background: #f8f9fa;
+            padding: 30px;
+            margin: 25px;
+            border-radius: 15px;
+            border: 2px solid #e9ecef;
+        }
+        
+        .user-info h3 {
+            color: #FF6B6B;
+            margin-bottom: 20px;
+            font-size: 1.4rem;
+        }
+        
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px;
+        }
+        
+        .info-item {
+            padding: 15px;
+            background: white;
+            border-radius: 10px;
+            border: 1px solid #dee2e6;
+        }
+        
+        .info-label {
+            font-weight: 600;
+            color: #6c757d;
+            font-size: 0.9rem;
+            margin-bottom: 5px;
+        }
+        
+        .info-value {
+            color: #FF6B6B;
+            font-size: 1.1rem;
+            font-weight: 600;
+        }
+        
+        .day-card {
+            margin: 25px;
+            background: white;
+            border-radius: 15px;
+            border: 2px solid #e9ecef;
+            overflow: hidden;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.08);
+        }
+        
+        .day-card h3 {
+            background: linear-gradient(135deg, #FF6B6B, #4ECDC4);
+            color: white;
+            padding: 20px;
+            margin: 0;
+            font-size: 1.3rem;
+            text-align: center;
+        }
+        
+        .exercises {
+            padding: 25px;
+        }
+        
+        .exercise-row {
+            display: grid;
+            grid-template-columns: 2fr 1fr 1fr 1fr;
+            gap: 15px;
+            padding: 15px;
+            margin: 10px 0;
+            background: #f8f9fa;
+            border-radius: 10px;
+            border-left: 4px solid #FF6B6B;
+            align-items: center;
+        }
+        
+        .exercise-name {
+            font-weight: 600;
+            color: #333;
+            font-size: 1.1rem;
+        }
+        
+        .exercise-sets, .exercise-reps, .exercise-rest {
+            text-align: center;
+        }
+        
+        .exercise-label {
+            display: block;
+            font-size: 0.8rem;
+            color: #6c757d;
+            margin-bottom: 2px;
+        }
+        
+        .exercise-value {
+            font-weight: 600;
+            color: #FF6B6B;
+            font-size: 1rem;
+        }
+        
+        .rest-day {
+            text-align: center;
+            padding: 30px;
+            font-size: 1.2rem;
+            color: #6c757d;
+            background: #f8f9fa;
+            border-radius: 10px;
+        }
+        
+        .exercise-text {
+            margin: 10px 0;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            border-left: 3px solid #4ECDC4;
+        }
+        
+        .footer {
+            background: #f8f9fa;
+            padding: 30px;
+            text-align: center;
+            border-top: 1px solid #e9ecef;
+        }
+        
+        @media (max-width: 768px) {
+            .exercise-row {
+                grid-template-columns: 1fr;
+                text-align: center;
+            }
+            
+            .container {
+                margin: 10px;
+                border-radius: 15px;
+            }
+            
+            .header {
+                padding: 20px 15px;
+            }
+            
+            .header h1 {
+                font-size: 2rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>💪 Персональный План Тренировок</h1>
+            <p>Создан специально для ${safeProfileData.first_name}</p>
+            <p>📅 ${currentDate}</p>
+        </div>
+        
+        <div class="user-info">
+            <h3>👤 Информация о пользователе</h3>
+            <div class="info-grid">
+                <div class="info-item">
+                    <div class="info-label">Имя</div>
+                    <div class="info-value">${safeProfileData.first_name}</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Возраст</div>
+                    <div class="info-value">${safeProfileData.age} лет</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Рост</div>
+                    <div class="info-value">${safeProfileData.height_cm} см</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Вес</div>
+                    <div class="info-value">${safeProfileData.weight_kg} кг</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Цель</div>
+                    <div class="info-value">${safeProfileData.goal === 'lose_weight' ? 'Похудение' : safeProfileData.goal === 'gain_mass' ? 'Набор массы' : 'Поддержание формы'}</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Опыт тренировок</div>
+                    <div class="info-value">${safePlanData.experience}</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Частота в неделю</div>
+                    <div class="info-value">${safePlanData.frequency_per_week} раз</div>
+                </div>
+            </div>
+        </div>
+        
+        ${dayCards}
+        
+        <div class="footer">
+            <p>🎯 <strong>Следуйте плану регулярно для достижения лучших результатов!</strong></p>
+            <p>💡 Не забывайте о правильном питании и достаточном количестве воды</p>
+            <p>⚠️ При возникновении дискомфорта или боли немедленно прекратите упражнение</p>
+        </div>
+    </div>
+</body>
+</html>
+    `;
 };
 
 const generateNutritionPlanHTML = (planContent, profileData, planData) => {
@@ -1432,32 +1685,7 @@ const generateNutritionPlanHTML = (planContent, profileData, planData) => {
         `;
     }
 
-    function generateDayCard(dayTitle, mealItems) {
-        const groupedMeals = {};
-        mealItems.forEach(item => {
-            if (!groupedMeals[item.meal]) {
-                groupedMeals[item.meal] = [];
-            }
-            groupedMeals[item.meal].push(item.item);
-        });
 
-        let mealsHtml = '';
-        Object.keys(groupedMeals).forEach(mealName => {
-            if (mealName) {
-                mealsHtml += `<h4 class="meal-title">${mealName}</h4>`;
-                groupedMeals[mealName].forEach(item => {
-                    mealsHtml += `<div class="meal-item">${item}</div>`;
-                });
-            }
-        });
-
-        return `
-            <div class="day-card">
-                <h3>${dayTitle}</h3>
-                <div class="meals">${mealsHtml}</div>
-            </div>
-        `;
-    }
 
     return `
     <!DOCTYPE html>
@@ -1653,6 +1881,7 @@ const generateNutritionPlanHTML = (planContent, profileData, planData) => {
 </html>
     `;
 };
+
 
 // Отправка плана в виде HTML документа
 const sendPlanAsDocument = async (chatId, planType, htmlContent, filename) => {
