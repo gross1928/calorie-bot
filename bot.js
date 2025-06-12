@@ -3,6 +3,8 @@ const supabase = require('./supabaseClient');
 const OpenAI = require('openai');
 const crypto = require('crypto');
 const cron = require('node-cron');
+// Добавляем импорт программ тренировок
+const { USER_WORKOUT_PROGRAMS } = require('./user_workout_programs.js');
 
 require('dotenv').config();
 
@@ -468,6 +470,42 @@ const formatAIResponse = (text) => {
     return formatted;
 };
 
+// Функция для красивого форматирования планов тренировок
+const formatWorkoutPlan = (text) => {
+    let formatted = text;
+    
+    // Заменяем ** на *
+    formatted = formatted.replace(/\*\*(.*?)\*\*/g, '*$1*');
+    
+    // Добавляем дополнительные emoji для красоты
+    formatted = formatted.replace(/🏋️/g, '🏋️‍♂️');
+    formatted = formatted.replace(/💪/g, '💪');
+    formatted = formatted.replace(/📊/g, '📊');
+    formatted = formatted.replace(/📅/g, '📅');
+    formatted = formatted.replace(/💡/g, '💡');
+    formatted = formatted.replace(/⚠️/g, '⚠️');
+    formatted = formatted.replace(/🎯/g, '🎯');
+    
+    // Улучшаем форматирование списков
+    formatted = formatted.replace(/^- /gm, '• ');
+    formatted = formatted.replace(/^(\d+)\. /gm, '$1️⃣ ');
+    
+    // Выделяем числа (подходы, повторения, веса)
+    formatted = formatted.replace(/(\d+)\s*x\s*(\d+)/g, '*$1 × $2*');
+    formatted = formatted.replace(/(\d+)\s*(кг|kg)/gi, '*$1 $2*');
+    formatted = formatted.replace(/(\d+)\s*(сек|мин|минут)/gi, '*$1 $2*');
+    
+    // Выделяем дни недели
+    formatted = formatted.replace(/(Понедельник|Вторник|Среда|Четверг|Пятница|Суббота|Воскресенье)/gi, '*$1*');
+    formatted = formatted.replace(/День\s*(\d+)/gi, '*День $1*');
+    
+    // Убираем лишние переносы и пробелы
+    formatted = formatted.replace(/\n\n+/g, '\n\n');
+    formatted = formatted.replace(/^\s+|\s+$/g, '');
+    
+    return formatted;
+};
+
 // --- Helper Functions ---
 const getDateRange = (period) => {
     const now = new Date();
@@ -658,9 +696,29 @@ const generateWorkoutPlan = async (profileData, additionalData) => {
         const { first_name, gender, age, height_cm, weight_kg, goal } = profileData;
         const { experience, goal: workoutGoal, priority_zones, injuries, location, frequency, duration } = additionalData;
 
-        console.log('Generating workout plan with OpenAI...');
+        console.log('Generating personalized workout plan based on predefined programs...');
         
-        const systemPrompt = `Ты - профессиональный фитнес-тренер с многолетним опытом. Твоя задача - создать персональный план тренировок на неделю.
+        // Определяем тип программы на основе цели
+        let programType = 'bodybuilding'; // по умолчанию
+        if (workoutGoal === 'strength' || workoutGoal === 'powerlifting') {
+            programType = 'powerlifting_and_strength';
+        }
+        
+        // Определяем уровень сложности
+        let level = 'beginner';
+        if (experience === 'intermediate') level = 'intermediate';
+        if (experience === 'advanced') level = 'advanced';
+        
+        // Получаем программу тренировок
+        const genderKey = gender === 'male' ? 'male' : 'female';
+        const baseProgram = USER_WORKOUT_PROGRAMS[programType]?.[genderKey]?.[level];
+        
+        if (!baseProgram) {
+            throw new Error('Подходящая программа тренировок не найдена');
+        }
+
+        // Формируем персональные рекомендации с ИИ
+        const systemPrompt = `Ты - профессиональный фитнес-тренер. На основе готовой программы тренировок создай персональные рекомендации для пользователя.
 
 ПРОФИЛЬ КЛИЕНТА:
 - Имя: ${first_name}
@@ -668,60 +726,53 @@ const generateWorkoutPlan = async (profileData, additionalData) => {
 - Возраст: ${age} лет
 - Рост: ${height_cm} см
 - Текущий вес: ${weight_kg} кг
-${additionalData.target_weight_kg ? `- Целевой вес: ${additionalData.target_weight_kg} кг` : ''}
-${additionalData.timeframe_months ? `- Срок достижения цели: ${additionalData.timeframe_months} месяцев` : ''}
-- Общая цель: ${goal === 'lose_weight' ? 'похудение' : goal === 'gain_mass' ? 'набор массы' : 'поддержание веса'}
-- Опыт тренировок: ${experience}
-- Цель тренировок: ${workoutGoal}
+- Цель: ${goal === 'lose_weight' ? 'похудение' : goal === 'gain_mass' ? 'набор массы' : 'поддержание веса'}
+- Опыт: ${experience}
 - Приоритетные зоны: ${priority_zones?.join(', ') || 'нет'}
 - Травмы/ограничения: ${injuries || 'нет'}
 - Место тренировок: ${location}
-- Частота тренировок: ${frequency} раз в неделю
-- Время тренировки: ${duration} минут
+- Частота: ${frequency} раз в неделю
+- Время: ${duration} минут
 
-ТРЕБОВАНИЯ К ПЛАНУ:
-1. План на 7 дней с указанием дней отдыха
-2. Упражнения должны быть безопасными и подходящими для уровня опыта
-3. Укажи количество подходов, повторений и время отдыха
-4. Включи разминку и заминку
-5. Ответ дай СТРОГО в формате Markdown с таблицами
+БАЗОВАЯ ПРОГРАММА:
+${JSON.stringify(baseProgram, null, 2)}
+
+ЗАДАЧА:
+1. Адаптируй базовую программу под профиль пользователя
+2. Дай персональные рекомендации по выполнению
+3. Учти травмы и ограничения
+4. Добавь советы по прогрессии нагрузок
+5. Ответ дай в красивом формате Markdown
 
 ФОРМАТ ОТВЕТА:
-# 🏋️ Персональный план тренировок для ${first_name}
+🏋️ **Персональный план тренировок для ${first_name}**
 
-## 📊 Общая информация
-- **Цель:** [цель тренировок]
-- **Уровень:** [уровень опыта] 
-- **Частота:** [количество тренировок в неделю]
+**📊 Ваша программа:** ${baseProgram.title}
+**🎯 Описание:** ${baseProgram.description}
 
-## 📅 Недельный план
+**📅 Программа тренировок:**
+[Адаптированная программа на основе базовой]
 
-### День 1 - [Название тренировки]
-| Упражнение | Подходы | Повторения | Отдых |
-|------------|---------|------------|-------|
-| [упражнение] | [подходы] | [повторения] | [время отдыха] |
+**💡 Персональные рекомендации:**
+- [Советы с учетом профиля пользователя]
+- [Рекомендации по весам и прогрессии]
+- [Учет травм и ограничений]
 
-### День 2 - [Название тренировки или Отдых]
-[аналогично]
-
-[...продолжи для всех 7 дней]
-
-## 💡 Рекомендации
-- [важные советы по выполнению]
-- [рекомендации по питанию во время тренировок]
-- [советы по восстановлению]`;
+**⚠️ Важные замечания:**
+- [Безопасность выполнения]
+- [Частота тренировок]`;
 
         const response = await openai.chat.completions.create({
-            model: 'gpt-4o',
+            model: 'gpt-4o-mini',
             messages: [
                 { role: 'system', content: systemPrompt },
-                { role: 'user', content: `Создай персональный план тренировок учитывая все мои данные.` }
+                { role: 'user', content: `Создай персональные рекомендации на основе готовой программы тренировок.` }
             ],
-            max_tokens: 2000,
+            max_tokens: 1500,
         });
 
-        const plan = response.choices[0].message.content;
-        return { success: true, plan };
+        const plan = formatWorkoutPlan(response.choices[0].message.content);
+        return { success: true, plan, isTextFormat: true };
 
     } catch (error) {
         console.error('Error generating workout plan:', error);
@@ -2875,8 +2926,8 @@ const sendDailyReports = async () => {
         // Получаем подписки для фильтрации пользователей (платные + PROMO с активными демо)
         const { data: subscriptions, error: subscriptionsError } = await supabase
             .from('user_subscriptions')
-            .select('user_id, plan, promo_expires_at')
-            .or('plan.in.(progress,maximum),and(promo_expires_at.gt.' + new Date().toISOString() + ')');
+            .select('user_id, tier, promo_expires_at')
+            .or('tier.in.(progress,maximum),and(promo_expires_at.gt.' + new Date().toISOString() + ')');
 
         if (subscriptionsError) {
             console.error('Error fetching subscriptions for daily reports:', subscriptionsError);
@@ -3200,8 +3251,8 @@ const sendWeeklyReports = async () => {
         // Получаем подписки для фильтрации VIP пользователей
         const { data: subscriptions, error: subscriptionsError } = await supabase
             .from('user_subscriptions')
-            .select('user_id, plan')
-            .eq('plan', 'maximum');
+            .select('user_id, tier')
+            .eq('tier', 'maximum');
 
         if (subscriptionsError) {
             console.error('Error fetching VIP subscriptions:', subscriptionsError);
@@ -3265,7 +3316,7 @@ const getUserSubscription = async (telegram_id) => {
 
         const { data: subscription, error } = await supabase
             .from('user_subscriptions')
-            .select('plan as tier, expires_at, promo_activated_at, promo_expires_at')
+            .select('tier, expires_at, promo_activated_at, promo_expires_at')
             .eq('user_id', profile.id)
             .single();
 
@@ -3322,7 +3373,7 @@ const activatePromo = async (telegram_id) => {
             .from('user_subscriptions')
             .upsert({ 
                 user_id: profile.id, 
-                plan: 'free', // на случай если записи нет
+                tier: 'free', // на случай если записи нет
                 promo_activated_at: now.toISOString(),
                 promo_expires_at: expires.toISOString()
             }, { onConflict: 'user_id' })
@@ -3894,11 +3945,12 @@ const setupBot = (app) => {
 
                 // Проверяем тариф пользователя  
                 const subscription = await getUserSubscription(telegram_id);
-                if (subscription.subscription_type === 'FREE') {
+                if (subscription.tier === 'free' && !subscription.promo_expires_at) {
                     bot.sendMessage(chat_id, '💪 *План тренировок недоступен на бесплатном тарифе*\n\nДля доступа к персональным планам тренировок требуется подписка.', {
                         parse_mode: 'Markdown',
                         reply_markup: {
                             inline_keyboard: [
+                                [{ text: '🎁 Попробовать бесплатно 3 дня', callback_data: 'activate_promo' }],
                                 [{ text: '💎 Посмотреть тарифы', callback_data: 'show_subscription_plans' }]
                             ]
                         }
@@ -3936,6 +3988,21 @@ const setupBot = (app) => {
 
                 if (error || !profile) {
                     bot.sendMessage(chat_id, 'Сначала нужно пройти регистрацию. Нажмите /start');
+                    return;
+                }
+
+                // Проверяем тариф пользователя  
+                const subscription = await getUserSubscription(telegram_id);
+                if (subscription.tier === 'free' && !subscription.promo_expires_at) {
+                    bot.sendMessage(chat_id, '🍽️ *План питания недоступен на бесплатном тарифе*\n\nДля доступа к персональным планам питания требуется подписка.', {
+                        parse_mode: 'Markdown',
+                        reply_markup: {
+                            inline_keyboard: [
+                                [{ text: '🎁 Попробовать бесплатно 3 дня', callback_data: 'activate_promo' }],
+                                [{ text: '💎 Посмотреть тарифы', callback_data: 'show_subscription_plans' }]
+                            ]
+                        }
+                    });
                     return;
                 }
 
@@ -5237,7 +5304,7 @@ const setupBot = (app) => {
                 .from('user_subscriptions')
                 .select('*')
                 .eq('telegram_id', telegram_id)
-                .in('plan', ['PROMO'])
+                .in('tier', ['PROMO'])
                 .single();
 
             if (existingPromo && !error) {
@@ -5475,6 +5542,22 @@ const setupBot = (app) => {
                 });
                 return;
             }
+
+            // Проверка подписки перед генерацией планов
+            const subscription = await getUserSubscription(telegram_id);
+            if (subscription.tier === 'free' && !subscription.promo_expires_at) {
+                await bot.editMessageText(`🔒 **Планы ${planType === 'workout' ? 'тренировок' : 'питания'} доступны только на платных тарифах**\n\nДля получения персональных планов оформите подписку:`, {
+                    chat_id, message_id: msg.message_id,
+                    parse_mode: 'Markdown',
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: '💎 Посмотреть тарифы', callback_data: 'show_subscription_plans' }],
+                            [{ text: '⬅️ Назад в меню', callback_data: 'main_menu' }]
+                        ]
+                    }
+                });
+                return;
+            }
             
             // Получаем профиль пользователя
             const profileFields = planType === 'workout' 
@@ -5588,6 +5671,43 @@ const setupBot = (app) => {
                             } catch (e) { /* игнорируем ошибки обновления */ }
                         }, 15000);
                         
+                        // 🔒 ПРОВЕРКА ЛИМИТОВ НА ПЛАНЫ
+                        const limitActionType = planType === 'workout' ? 'workout_plans' : 'nutrition_plans';
+                        const limitCheck = await checkActionLimit(telegram_id, limitActionType);
+                        if (!limitCheck.allowed) {
+                            const planTypeName = planType === 'workout' ? 'тренировок' : 'питания';
+                            let upgradeText = `🚫 **Лимит планов ${planTypeName} исчерпан!**\n\n`;
+                            upgradeText += `📊 Использовано: ${limitCheck.used}/${limitCheck.limit} за ${limitCheck.period}\n\n`;
+                            
+                            if (subscription.tier === 'free' && !subscription.promo_expires_at) {
+                                upgradeText += `🎁 **Попробуйте промо-период:**\n• Дополнительные планы ${planTypeName}\n• 3 дня бесплатно\n\n`;
+                                upgradeText += `Или выберите тариф для безлимитного доступа! 🚀`;
+                                
+                                await bot.editMessageText(upgradeText, {
+                                    chat_id, message_id: loadingMessage.message_id,
+                                    parse_mode: 'Markdown',
+                                    reply_markup: {
+                                        inline_keyboard: [
+                                            [{ text: '🎁 Активировать промо', callback_data: 'activate_promo' }],
+                                            [{ text: '📋 Тарифы', callback_data: 'subscription_plans' }]
+                                        ]
+                                    }
+                                });
+                            } else {
+                                upgradeText += `Выберите подходящий тариф для продолжения! 🚀`;
+                                await bot.editMessageText(upgradeText, {
+                                    chat_id, message_id: loadingMessage.message_id,
+                                    parse_mode: 'Markdown',
+                                    reply_markup: {
+                                        inline_keyboard: [
+                                            [{ text: '📋 Посмотреть тарифы', callback_data: 'subscription_plans' }]
+                                        ]
+                                    }
+                                });
+                            }
+                            return;
+                        }
+
                         let planResult;
                         if (planType === 'workout') {
                             const workoutData = {
@@ -5611,20 +5731,33 @@ const setupBot = (app) => {
                         }
 
                         if (planResult.success) {
-                            // Отправляем красивый HTML-документ
-                            const currentDate = new Date().toLocaleDateString('ru-RU').replace(/\./g, '_');
-                            let htmlContent, filename;
+                            // ✅ ИНКРЕМЕНТИРУЕМ СЧЕТЧИК ПЛАНОВ
+                            await incrementUsage(telegram_id, limitActionType);
                             
-                            if (planType === 'workout') {
-                                htmlContent = generateWorkoutPlanHTML(planResult.plan, profile, existingData);
-                                filename = `План_тренировок_${profile.first_name}_${currentDate}.html`;
+                            if (planType === 'workout' && planResult.isTextFormat) {
+                                // Отправляем план тренировок как красиво оформленный текст
+                                await bot.deleteMessage(chat_id, loadingMessage.message_id);
+                                await smartSendMessage(chat_id, planResult.plan, {
+                                    parse_mode: 'Markdown',
+                                    reply_markup: {
+                                        inline_keyboard: [
+                                            [{ text: '🏋️ Начать тренировку', callback_data: 'workout_start' }],
+                                            [{ text: '📊 Статистика тренировок', callback_data: 'workout_stats' }],
+                                            [{ text: '🏠 Главное меню', callback_data: 'main_menu' }]
+                                        ]
+                                    }
+                                });
                             } else {
+                                // Отправляем план питания как HTML-документ
+                                const currentDate = new Date().toLocaleDateString('ru-RU').replace(/\./g, '_');
+                                let htmlContent, filename;
+                                
                                 htmlContent = generateNutritionPlanHTML(planResult.plan, profile, existingData);
                                 filename = `План_питания_${profile.first_name}_${currentDate}.html`;
+                                
+                                await bot.deleteMessage(chat_id, loadingMessage.message_id);
+                                await sendPlanAsDocument(chat_id, planType, htmlContent, filename);
                             }
-                            
-                            await bot.deleteMessage(chat_id, loadingMessage.message_id);
-                            await sendPlanAsDocument(chat_id, planType, htmlContent, filename);
                         } else {
                             await bot.editMessageText(`❌ Произошла ошибка при создании плана: ${planResult.error}`, {
                                 chat_id,
@@ -6488,13 +6621,27 @@ const setupBot = (app) => {
                                 .eq('telegram_id', telegram_id);
                         }
                         
-                        // Отправляем красивый HTML-документ
-                        const currentDate = new Date().toLocaleDateString('ru-RU').replace(/\./g, '_');
-                        const htmlContent = generateWorkoutPlanHTML(planResult.plan, state.profileData, state.data);
-                        const filename = `План_тренировок_${state.profileData.first_name}_${currentDate}.html`;
-                        
+                        // Отправляем план как красиво оформленный текст
                         await bot.deleteMessage(chat_id, msg.message_id);
-                        await sendPlanAsDocument(chat_id, 'workout', htmlContent, filename);
+                        
+                        if (planResult.isTextFormat) {
+                            await smartSendMessage(chat_id, planResult.plan, {
+                                parse_mode: 'Markdown',
+                                reply_markup: {
+                                    inline_keyboard: [
+                                        [{ text: '🏋️ Начать тренировку', callback_data: 'workout_start' }],
+                                        [{ text: '📊 Статистика тренировок', callback_data: 'workout_stats' }],
+                                        [{ text: '🏠 Главное меню', callback_data: 'main_menu' }]
+                                    ]
+                                }
+                            });
+                        } else {
+                            // Fallback для старого формата HTML (если необходимо)
+                            const currentDate = new Date().toLocaleDateString('ru-RU').replace(/\./g, '_');
+                            const htmlContent = generateWorkoutPlanHTML(planResult.plan, state.profileData, state.data);
+                            const filename = `План_тренировок_${state.profileData.first_name}_${currentDate}.html`;
+                            await sendPlanAsDocument(chat_id, 'workout', htmlContent, filename);
+                        }
                     } else {
                         await bot.editMessageText(`❌ Произошла ошибка при создании плана: ${planResult.error}`, {
                             chat_id, message_id: msg.message_id
