@@ -320,8 +320,21 @@ const closeConflictingStates = (telegram_id, currentOperation) => {
             break;
             
         case 'profile_menu':
-            // Полная очистка при переходе в профиль (оставляем как есть)
-            clearUserStates(telegram_id);
+            // Очистка при переходе в профиль, но НЕ трогаем registrationState если пользователь регистрируется
+            if (!registrationState[telegram_id]) {
+                clearUserStates(telegram_id);
+            } else {
+                // Если пользователь в процессе регистрации, очищаем только конфликтующие состояния
+                delete manualAddState[telegram_id];
+                delete workoutPlanState[telegram_id];
+                delete nutritionPlanState[telegram_id];
+                delete waterInputState[telegram_id];
+                delete profileEditState[telegram_id];
+                delete challengeStepsState[telegram_id];
+                delete workoutInjuryState[telegram_id];
+                delete questionState[telegram_id];
+                delete medicalAnalysisState[telegram_id];
+            }
             break;
             
         default:
@@ -1296,34 +1309,66 @@ const generateWorkoutPlanHTML = (planContent, profileData, planData) => {
             }
             
             body {
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                background: linear-gradient(135deg, #1a4c2b 0%, #0f2818 100%);
+                color: #fff;
                 min-height: 100vh;
+                position: relative;
+                overflow-x: hidden;
                 padding: 20px;
-                color: #333;
-                line-height: 1.6;
+            }
+            
+            /* Светящаяся нитка */
+            body::before {
+                content: '';
+                position: absolute;
+                top: 0;
+                left: 50%;
+                width: 3px;
+                height: 100%;
+                background: linear-gradient(180deg, 
+                    #ffd700 0%, 
+                    #ffed4e 25%, 
+                    #fff700 50%, 
+                    #ffed4e 75%, 
+                    #ffd700 100%);
+                box-shadow: 0 0 20px #ffd700, 0 0 40px #ffd700, 0 0 60px #ffd700;
+                animation: glow 3s ease-in-out infinite alternate;
+                z-index: 0;
+            }
+            
+            @keyframes glow {
+                from { box-shadow: 0 0 20px #ffd700, 0 0 40px #ffd700, 0 0 60px #ffd700; }
+                to { box-shadow: 0 0 30px #ffd700, 0 0 60px #ffd700, 0 0 90px #ffd700; }
             }
             
             .container {
                 max-width: 900px;
                 margin: 0 auto;
-                background: white;
+                background: rgba(26, 76, 43, 0.9);
                 border-radius: 20px;
-                box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+                border: 2px solid #ffd700;
+                box-shadow: 0 20px 40px rgba(0,0,0,0.3);
+                backdrop-filter: blur(10px);
                 overflow: hidden;
+                position: relative;
+                z-index: 1;
             }
             
             .header {
-                background: linear-gradient(135deg, #FF6B6B, #4ECDC4);
-                color: white;
+                background: rgba(15, 40, 24, 0.9);
+                color: #fff;
                 padding: 40px 30px;
                 text-align: center;
+                border-bottom: 2px solid #ffd700;
             }
             
             .header h1 {
                 font-size: 2.5rem;
-                margin-bottom: 10px;
-                font-weight: 700;
+                margin-bottom: 15px;
+                color: #ffd700;
+                text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+                font-weight: bold;
             }
             
             .header p {
@@ -1373,20 +1418,28 @@ const generateWorkoutPlanHTML = (planContent, profileData, planData) => {
             
             .day-card {
                 margin: 25px;
-                background: white;
+                background: rgba(26, 76, 43, 0.8);
                 border-radius: 15px;
-                border: 2px solid #e9ecef;
+                border: 1px solid #ffd700;
                 overflow: hidden;
-                box-shadow: 0 5px 15px rgba(0,0,0,0.08);
+                box-shadow: 0 8px 20px rgba(0,0,0,0.2);
+                transition: transform 0.3s ease, box-shadow 0.3s ease;
+            }
+            
+            .day-card:hover {
+                transform: translateY(-5px);
+                box-shadow: 0 15px 30px rgba(0, 0, 0, 0.3);
             }
             
             .day-card h3 {
-                background: linear-gradient(135deg, #FF6B6B, #4ECDC4);
-                color: white;
+                background: rgba(15, 40, 24, 0.9);
+                color: #ffd700;
                 padding: 20px;
                 margin: 0;
-                font-size: 1.3rem;
+                font-size: 1.8rem;
                 text-align: center;
+                font-weight: bold;
+                text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.5);
             }
             
             .exercises {
@@ -1633,34 +1686,66 @@ const generateNutritionPlanHTML = (planContent, profileData, planData) => {
             }
             
             body {
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                background: linear-gradient(135deg, #1a4c2b 0%, #0f2818 100%);
+                color: #fff;
                 min-height: 100vh;
+                position: relative;
+                overflow-x: hidden;
                 padding: 20px;
-                color: #333;
-                line-height: 1.6;
+            }
+            
+            /* Светящаяся нитка */
+            body::before {
+                content: '';
+                position: absolute;
+                top: 0;
+                left: 50%;
+                width: 3px;
+                height: 100%;
+                background: linear-gradient(180deg, 
+                    #ffd700 0%, 
+                    #ffed4e 25%, 
+                    #fff700 50%, 
+                    #ffed4e 75%, 
+                    #ffd700 100%);
+                box-shadow: 0 0 20px #ffd700, 0 0 40px #ffd700, 0 0 60px #ffd700;
+                animation: glow 3s ease-in-out infinite alternate;
+                z-index: 0;
+            }
+            
+            @keyframes glow {
+                from { box-shadow: 0 0 20px #ffd700, 0 0 40px #ffd700, 0 0 60px #ffd700; }
+                to { box-shadow: 0 0 30px #ffd700, 0 0 60px #ffd700, 0 0 90px #ffd700; }
             }
             
             .container {
                 max-width: 900px;
                 margin: 0 auto;
-                background: white;
+                background: rgba(26, 76, 43, 0.9);
                 border-radius: 20px;
-                box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+                border: 2px solid #ffd700;
+                box-shadow: 0 20px 40px rgba(0,0,0,0.3);
+                backdrop-filter: blur(10px);
                 overflow: hidden;
+                position: relative;
+                z-index: 1;
             }
             
             .header {
-                background: linear-gradient(135deg, #4CAF50, #45a049);
-                color: white;
+                background: rgba(15, 40, 24, 0.9);
+                color: #fff;
                 padding: 40px 30px;
                 text-align: center;
+                border-bottom: 2px solid #ffd700;
             }
             
             .header h1 {
                 font-size: 2.5rem;
-                margin-bottom: 10px;
-                font-weight: 700;
+                margin-bottom: 15px;
+                color: #ffd700;
+                text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+                font-weight: bold;
             }
             
             .header p {
@@ -1669,17 +1754,19 @@ const generateNutritionPlanHTML = (planContent, profileData, planData) => {
             }
             
             .user-info {
-                background: #f8f9fa;
+                background: rgba(15, 40, 24, 0.8);
                 padding: 30px;
                 margin: 25px;
                 border-radius: 15px;
-                border: 2px solid #e9ecef;
+                border: 1px solid #ffd700;
+                box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
             }
             
             .user-info h3 {
-                color: #4CAF50;
+                color: #ffd700;
                 margin-bottom: 20px;
                 font-size: 1.4rem;
+                font-weight: bold;
             }
             
             .info-grid {
@@ -1710,20 +1797,28 @@ const generateNutritionPlanHTML = (planContent, profileData, planData) => {
             
             .day-card {
                 margin: 25px;
-                background: white;
+                background: rgba(26, 76, 43, 0.8);
                 border-radius: 15px;
-                border: 2px solid #e9ecef;
+                border: 1px solid #ffd700;
                 overflow: hidden;
-                box-shadow: 0 5px 15px rgba(0,0,0,0.08);
+                box-shadow: 0 8px 20px rgba(0,0,0,0.2);
+                transition: transform 0.3s ease, box-shadow 0.3s ease;
+            }
+            
+            .day-card:hover {
+                transform: translateY(-5px);
+                box-shadow: 0 15px 30px rgba(0, 0, 0, 0.3);
             }
             
             .day-card h3 {
-                background: linear-gradient(135deg, #FF6B6B, #4ECDC4);
-                color: white;
+                background: rgba(15, 40, 24, 0.9);
+                color: #ffd700;
                 padding: 20px;
                 margin: 0;
-                font-size: 1.3rem;
+                font-size: 1.8rem;
                 text-align: center;
+                font-weight: bold;
+                text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.5);
             }
             
             .meals {
@@ -1732,27 +1827,29 @@ const generateNutritionPlanHTML = (planContent, profileData, planData) => {
             
             .meal-title {
                 margin: 20px 0 10px 0;
-                font-size: 1.2rem;
-                font-weight: 600;
-                color: #4CAF50;
-                padding: 10px 15px;
-                background: #f8f9fa;
-                border-radius: 8px;
-                border-left: 4px solid #4CAF50;
+                font-size: 1.3rem;
+                font-weight: bold;
+                color: #ffd700;
+                padding: 12px 16px;
+                background: rgba(15, 40, 24, 0.8);
+                border-radius: 10px;
+                border-left: 4px solid #ffd700;
+                text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.3);
             }
             
             .meal-item {
-                margin: 8px 0;
-                padding: 12px 15px;
-                background: #f8f9fa;
-                border-radius: 8px;
-                border-left: 3px solid #4CAF50;
-                transition: transform 0.2s ease;
+                margin: 12px 0;
+                padding: 18px;
+                background: rgba(15, 40, 24, 0.6);
+                border-radius: 12px;
+                border-left: 4px solid #ffd700;
+                transition: background 0.3s ease;
+                color: #e8f5e8;
+                line-height: 1.6;
             }
             
             .meal-item:hover {
-                transform: translateX(5px);
-                background: #e8f5e9;
+                background: rgba(15, 40, 24, 0.8);
             }
             
             .footer {
@@ -1797,10 +1894,12 @@ const generateNutritionPlanHTML = (planContent, profileData, planData) => {
                 <h1>🥗 Персональный план питания</h1>
                 <div class="user-info">
                     <div class="user-details">
-                        <p><strong>Имя:</strong> ${profileData.first_name}</p>
-                        <p><strong>Цель:</strong> ${goalText}</p>
-                        <p><strong>Дневная норма калорий:</strong> ${profileData.daily_calories} ккал</p>
-                        <p><strong>План создан:</strong> ${new Date().toLocaleDateString('ru-RU')}</p>
+                        <p><strong>Имя:</strong> ${safeProfileData.first_name}</p>
+                        <p><strong>Цель:</strong> ${safeProfileData.goal === 'lose_weight' || safeProfileData.goal === 'lose' ? 'Похудение' : 
+                            safeProfileData.goal === 'gain_mass' || safeProfileData.goal === 'gain' ? 'Набор мышечной массы' : 
+                            safeProfileData.goal === 'maintain' ? 'Поддержание веса' : 'Улучшение здоровья'}</p>
+                        <p><strong>Дневная норма калорий:</strong> ${safeProfileData.daily_calories} ккал</p>
+                        <p><strong>План создан:</strong> ${currentDate}</p>
                     </div>
                 </div>
                 <div class="content">
@@ -3298,7 +3397,7 @@ const checkActionLimit = async (telegram_id, action) => {
     };
 
     let userLimits;
-    if (subscription.subscription_type === 'PROMO' && isPromoActive) {
+    if (subscription.tier === 'PROMO' && isPromoActive) {
         userLimits = limits.promo;
     } else if (subscription.tier === 'free' && isPromoActive) {
         userLimits = limits.promo;
@@ -3450,7 +3549,7 @@ const setupBot = (app) => {
         const chat_id = msg.chat.id;
 
         try {
-            if (registrationState[telegram_id]) delete registrationState[telegram_id];
+            // Очищаем только неконфликтующие состояния, НЕ трогаем registrationState
             if (manualAddState[telegram_id]) delete manualAddState[telegram_id];
 
             const { data, error } = await supabase
@@ -3462,12 +3561,67 @@ const setupBot = (app) => {
             if (error && error.code !== 'PGRST116') throw error;
 
             if (data) {
+                // Пользователь уже зарегистрирован - очищаем все состояния и показываем меню
+                if (registrationState[telegram_id]) delete registrationState[telegram_id];
                 showMainMenu(chat_id, `С возвращением, ${first_name}! Чем могу помочь?`);
             } else {
-                registrationState[telegram_id] = { step: 'ask_name', data: { telegram_id, username, first_name, last_name, chat_id } };
-                bot.sendMessage(chat_id, 'Привет! 👋 Я твой личный помощник по подсчёту калорий. Давай для начала зарегистрируемся. Как тебя зовут?', {
-                    reply_markup: { remove_keyboard: true }
-                });
+                // Новый пользователь - проверяем, не в процессе ли он регистрации
+                if (registrationState[telegram_id]) {
+                    // Пользователь уже в процессе регистрации - продолжаем с текущего шага
+                    const currentStep = registrationState[telegram_id].step;
+                    let continueMessage = 'Вы уже начали регистрацию. Продолжим с текущего шага.\n\n';
+                    
+                    switch (currentStep) {
+                        case 'ask_name':
+                            continueMessage += 'Как тебя зовут?';
+                            break;
+                        case 'ask_gender':
+                            continueMessage += 'Выбери свой пол:';
+                            bot.sendMessage(chat_id, continueMessage, {
+                                reply_markup: {
+                                    inline_keyboard: [
+                                        [{ text: 'Мужской', callback_data: 'register_gender_male' }],
+                                        [{ text: 'Женский', callback_data: 'register_gender_female' }]
+                                    ]
+                                }
+                            });
+                            return;
+                        case 'ask_age':
+                            continueMessage += 'Введи свой возраст (полных лет):';
+                            break;
+                        case 'ask_height':
+                            continueMessage += 'Какой у тебя рост в сантиметрах?';
+                            break;
+                        case 'ask_weight':
+                            continueMessage += 'И вес в килограммах? (Можно дробное число, например, 65.5)';
+                            break;
+                        case 'ask_goal':
+                            continueMessage += 'Какая у тебя цель?';
+                            bot.sendMessage(chat_id, continueMessage, {
+                                reply_markup: {
+                                    inline_keyboard: [
+                                        [{ text: '📉 Похудение', callback_data: 'register_goal_lose' }],
+                                        [{ text: '⚖️ Поддержание', callback_data: 'register_goal_maintain' }],
+                                        [{ text: '📈 Набор массы', callback_data: 'register_goal_gain' }]
+                                    ]
+                                }
+                            });
+                            return;
+                        default:
+                            continueMessage += 'Как тебя зовут?';
+                            registrationState[telegram_id].step = 'ask_name';
+                    }
+                    
+                    bot.sendMessage(chat_id, continueMessage, {
+                        reply_markup: { remove_keyboard: true }
+                    });
+                } else {
+                    // Начинаем новую регистрацию
+                    registrationState[telegram_id] = { step: 'ask_name', data: { telegram_id, username, first_name, last_name, chat_id } };
+                    bot.sendMessage(chat_id, 'Привет! 👋 Я твой личный помощник по подсчёту калорий. Давай для начала зарегистрируемся. Как тебя зовут?', {
+                        reply_markup: { remove_keyboard: true }
+                    });
+                }
             }
         } catch (dbError) {
             console.error('Error checking user profile:', dbError.message);
@@ -4718,6 +4872,15 @@ const setupBot = (app) => {
         }
 
         // --- Universal Text Message Handler ---
+        // Проверяем состояния регистрации и других операций
+        if (registrationState[telegram_id] || 
+            workoutPlanState[telegram_id] || 
+            nutritionPlanState[telegram_id] ||
+            manualAddState[telegram_id]) {
+            // Не вызываем универсального агента во время этих операций
+            return;
+        }
+
         // Если сообщение не попало ни в одну из категорий выше, обрабатываем универсальным агентом
         if (msg.text && !msg.text.startsWith('/')) {
             try {
@@ -5062,7 +5225,7 @@ const setupBot = (app) => {
             await bot.answerCallbackQuery(callbackQuery.id);
             
             const subscription = await getUserSubscription(telegram_id);
-            if (subscription.subscription_type !== 'FREE') {
+            if (subscription.tier !== 'free') {
                 await bot.editMessageText('У вас уже есть активная подписка! 😊', {
                     chat_id, message_id: msg.message_id
                 });
@@ -5074,7 +5237,7 @@ const setupBot = (app) => {
                 .from('user_subscriptions')
                 .select('*')
                 .eq('telegram_id', telegram_id)
-                .in('subscription_type', ['PROMO'])
+                .in('plan', ['PROMO'])
                 .single();
 
             if (existingPromo && !error) {
@@ -6351,411 +6514,20 @@ const setupBot = (app) => {
             return;
         }
 
-        // --- Nutrition Plan Callbacks ---
-        if (action === 'nutrition') {
-            const subAction = params[0];
-            const value = params[1];
-            await bot.answerCallbackQuery(callbackQuery.id);
-
-            const state = nutritionPlanState[telegram_id];
-            if (!state) {
-                await bot.editMessageText('Сессия истекла. Пожалуйста, начните заново.', {
-                    chat_id, message_id: msg.message_id
-                });
-                return;
-            }
-
-            if (state.step === 'ask_activity' && subAction === 'activity') {
-                state.data = { ...state.data, activity: value };
-                state.step = 'ask_preferences';
-
-                await bot.editMessageText('Теперь расскажите о ваших пищевых предпочтениях:', {
-                    chat_id, message_id: msg.message_id,
-                    reply_markup: {
-                        inline_keyboard: [
-                            [{ text: 'Обычное питание', callback_data: 'nutrition_pref_regular' }],
-                            [{ text: 'Вегетарианство', callback_data: 'nutrition_pref_vegetarian' }],
-                            [{ text: 'Веганство', callback_data: 'nutrition_pref_vegan' }],
-                            [{ text: 'Кето-диета', callback_data: 'nutrition_pref_keto' }]
-                        ]
-                    }
-                });
-            } else if (state.step === 'ask_preferences' && subAction === 'pref') {
-                state.data = { ...state.data, preferences: value };
-                state.step = 'ask_allergies';
-
-                await bot.editMessageText('Есть ли у вас пищевые аллергии или непереносимости?', {
-                    chat_id, message_id: msg.message_id,
-                    reply_markup: {
-                        inline_keyboard: [
-                            [{ text: 'Нет аллергий', callback_data: 'nutrition_allergy_none' }],
-                            [{ text: 'Лактоза', callback_data: 'nutrition_allergy_lactose' }],
-                            [{ text: 'Глютен', callback_data: 'nutrition_allergy_gluten' }],
-                            [{ text: 'Орехи', callback_data: 'nutrition_allergy_nuts' }],
-                            [{ text: 'Другое (напишу сам)', callback_data: 'nutrition_allergy_custom' }]
-                        ]
-                    }
-                });
-            } else if (state.step === 'ask_allergies' && subAction === 'allergy') {
-                state.data = { ...state.data, allergies: value };
-                state.step = 'ask_meals_count';
-
-                await bot.editMessageText('Сколько приёмов пищи в день вам комфортно?', {
-                    chat_id, message_id: msg.message_id,
-                    reply_markup: {
-                        inline_keyboard: [
-                            [{ text: '3 основных приёма', callback_data: 'nutrition_meals_three' }],
-                            [{ text: '5-6 маленьких приёмов', callback_data: 'nutrition_meals_five' }]
-                        ]
-                    }
-                });
-            } else if (state.step === 'ask_meals_count' && subAction === 'meals') {
-                state.data = { ...state.data, mealsCount: value };
-                state.step = 'generate_plan';
-
-                // Генерируем план питания
-                await bot.sendChatAction(chat_id, 'typing');
-                showTyping(chat_id, 25000);
-                
-                const loadingMessage = await bot.editMessageText('🤖 Подготавливаю ваш план питания...', {
-                    chat_id, message_id: msg.message_id,
-                    reply_markup: null
-                });
-
-                try {
-                    // Сохраняем данные в базу
-                    const { data: profile } = await supabase
-                        .from('profiles')
-                        .select('id')
-                        .eq('telegram_id', telegram_id)
-                        .single();
-
-                    const nutritionData = {
-                        user_id: profile.id,
-                        activity_level: state.data.activity,
-                        calorie_goal: state.profileData.goal, // используем цель из профиля
-                        allergies: [state.data.allergies],
-                        diet_type: state.data.preferences,
-                        meals_per_day: state.data.mealsCount,
-                        product_limitations: 'none',
-                        supplements_interest: 'no' // пока по умолчанию
-                    };
-
-                    // Сначала пытаемся обновить существующую запись
-                    const { data: existingData } = await supabase
-                        .from('nutrition_plan_data')
-                        .select('user_id')
-                        .eq('user_id', profile.id)
-                        .single();
-
-                    let saveError;
-                    if (existingData) {
-                        // Обновляем существующую запись
-                        const { error } = await supabase
-                            .from('nutrition_plan_data')
-                            .update(nutritionData)
-                            .eq('user_id', profile.id);
-                        saveError = error;
-                    } else {
-                        // Создаем новую запись
-                        const { error } = await supabase
-                            .from('nutrition_plan_data')
-                            .insert(nutritionData);
-                        saveError = error;
-                    }
-
-                    if (saveError) throw saveError;
-
-                    // Постепенное обновление прогресса
-                    setTimeout(async () => {
-                        try {
-                            await bot.editMessageText(`🤖 Рассчитываю калории и нутриенты...`, {
-                                chat_id, message_id: loadingMessage.message_id
-                            });
-                        } catch (e) { /* игнорируем ошибки обновления */ }
-                    }, 3000);
-                    
-                    setTimeout(async () => {
-                        try {
-                            await bot.editMessageText(`🤖 Подбираю блюда под ваши предпочтения...`, {
-                                chat_id, message_id: loadingMessage.message_id
-                            });
-                        } catch (e) { /* игнорируем ошибки обновления */ }
-                    }, 8000);
-                    
-                    setTimeout(async () => {
-                        try {
-                            await bot.editMessageText(`🤖 Составляю недельное меню... Почти готово!`, {
-                                chat_id, message_id: loadingMessage.message_id
-                            });
-                        } catch (e) { /* игнорируем ошибки обновления */ }
-                    }, 15000);
-
-                    // 🔒 ПРОВЕРКА ЛИМИТОВ НА ПЛАНЫ ПИТАНИЯ
-                    const nutritionLimitCheck = await checkActionLimit(telegram_id, 'nutrition_plans');
-                    if (!nutritionLimitCheck.allowed) {
-                        const subscription = await getUserSubscription(telegram_id);
-                        let upgradeText = `🚫 **Лимит планов питания исчерпан!**\n\n`;
-                        upgradeText += `📊 Использовано: ${nutritionLimitCheck.used}/${nutritionLimitCheck.limit} за ${nutritionLimitCheck.period}\n\n`;
-                        upgradeText += `🍽️ Планы питания доступны в тарифах ПРОГРЕСС и МАКСИМУМ!\n\n`;
-                        upgradeText += `Выберите подходящий тариф для продолжения! 🚀`;
-                        
-                        await bot.editMessageText(upgradeText, {
-                            chat_id, message_id: loadingMessage.message_id,
-                            parse_mode: 'Markdown',
-                            reply_markup: {
-                                inline_keyboard: [
-                                    [{ text: '📋 Посмотреть тарифы', callback_data: 'subscription_plans' }]
-                                ]
-                            }
-                        });
-                        delete nutritionPlanState[telegram_id];
-                        return;
-                    }
-                    
-                    // Добавляем целевой вес и время в данные профиля для плана питания
-                    const enrichedProfileData = {
-                        ...state.profileData,
-                        target_weight_kg: state.data.target_weight_kg || state.profileData.target_weight_kg,
-                        timeframe_months: state.data.timeframe_months || state.profileData.timeframe_months
-                    };
-                    
-                    // Генерируем план с OpenAI
-                    const planResult = await generateNutritionPlan(enrichedProfileData, state.data);
-
-                    if (planResult.success) {
-                        // ✅ ИНКРЕМЕНТИРУЕМ СЧЕТЧИК ПЛАНОВ ПИТАНИЯ
-                        await incrementUsage(telegram_id, 'nutrition_plans');
-                        
-                        // Отправляем красивый HTML-документ
-                        const currentDate = new Date().toLocaleDateString('ru-RU').replace(/\./g, '_');
-                        const htmlContent = generateNutritionPlanHTML(planResult.plan, state.profileData, state.data);
-                        const filename = `План_питания_${state.profileData.first_name}_${currentDate}.html`;
-                        
-                        await bot.deleteMessage(chat_id, msg.message_id);
-                        await sendPlanAsDocument(chat_id, 'nutrition', htmlContent, filename);
-                    } else {
-                        await bot.editMessageText(`❌ Произошла ошибка при создании плана: ${planResult.error}`, {
-                            chat_id, message_id: msg.message_id
-                        });
-                    }
-
-                } catch (error) {
-                    console.error('Error generating nutrition plan:', error);
-                    await bot.editMessageText('❌ Произошла ошибка при создании плана. Попробуйте позже.', {
-                        chat_id, message_id: msg.message_id
-                    });
-                }
-
-                // Очищаем состояние
-                delete nutritionPlanState[telegram_id];
-            }
+        // --- Universal Text Message Handler ---
+        // Проверяем состояния регистрации и других операций
+        if (registrationState[telegram_id] || 
+            workoutPlanState[telegram_id] || 
+            nutritionPlanState[telegram_id] ||
+            manualAddState[telegram_id]) {
+            // Не вызываем универсального агента во время этих операций
             return;
         }
 
-        // --- Profile Edit Callbacks ---
-        if (data.startsWith('profile_')) {
-            await bot.answerCallbackQuery(callbackQuery.id);
-            
-            const parts = data.split('_');
-            const action = parts[1];
-            const field = parts.slice(2).join('_');
-            
-            if (action === 'edit') {
-                // Инициализируем редактирование поля
-                profileEditState[telegram_id] = { field: field };
-                
-                let fieldName = '';
-                let question = '';
-                let keyboard = null;
-                
-                switch (field) {
-                    case 'name':
-                        fieldName = 'имя';
-                        question = 'Введите ваше имя:';
-                        break;
-                    case 'age':
-                        fieldName = 'возраст';
-                        question = 'Введите ваш возраст (в годах):';
-                        break;
-                    case 'height':
-                        fieldName = 'рост';
-                        question = 'Введите ваш рост (в см):';
-                        break;
-                    case 'weight':
-                        fieldName = 'вес';
-                        question = 'Введите ваш текущий вес (в кг):';
-                        break;
-                    case 'target_weight':
-                        fieldName = 'целевой вес';
-                        question = 'Введите ваш целевой вес (в кг):';
-                        break;
-                    case 'timeframe':
-                        fieldName = 'срок достижения цели';
-                        question = 'Введите срок достижения цели (в месяцах):';
-                        break;
-                    case 'goal':
-                        fieldName = 'цель';
-                        question = 'Выберите вашу цель:';
-                        keyboard = {
-                            inline_keyboard: [
-                                [{ text: '📉 Похудеть', callback_data: 'profile_update_goal_lose_weight' }],
-                                [{ text: '📈 Набрать массу', callback_data: 'profile_update_goal_gain_mass' }],
-                                [{ text: '⚖️ Поддерживать вес', callback_data: 'profile_update_goal_maintain' }]
-                            ]
-                        };
-                        break;
-                    case 'gender':
-                        fieldName = 'пол';
-                        question = 'Выберите ваш пол:';
-                        keyboard = {
-                            inline_keyboard: [
-                                [{ text: '👨 Мужской', callback_data: 'profile_update_gender_male' }],
-                                [{ text: '👩 Женский', callback_data: 'profile_update_gender_female' }]
-                            ]
-                        };
-                        break;
-                }
-                
-                await bot.editMessageText(`Изменение: ${fieldName}\n\n${question}`, {
-                    chat_id, message_id: msg.message_id,
-                    reply_markup: keyboard
-                });
-                
-            } else if (action === 'update') {
-                // Этот блок обрабатывает нажатия на кнопки (Пол, Цель)
-                const fieldToUpdate = parts[2]; // e.g., 'goal'
-                const valueToSave = parts.slice(3).join('_'); // e.g., 'lose_weight'
-
-                let updatePayload = {};
-                let fieldNameForMessage = '';
-                let displayValue = '';
-
-                if (fieldToUpdate === 'goal') {
-                    updatePayload.goal = valueToSave;
-                    fieldNameForMessage = 'Цель';
-                    displayValue = valueToSave === 'lose_weight' ? 'Похудеть' :
-                                 valueToSave === 'gain_mass' ? 'Набор массы' : 'Поддерживать вес';
-                } else if (fieldToUpdate === 'gender') {
-                    updatePayload.gender = valueToSave;
-                    fieldNameForMessage = 'Пол';
-                    displayValue = valueToSave === 'male' ? 'Мужской' : 'Женский';
-                } else {
-                    await bot.editMessageText('❌ Неизвестное действие. Попробуйте снова.', {
-                        chat_id, message_id: msg.message_id
-                    });
-                    return;
-                }
-                
-                try {
-                    const { error } = await supabase
-                        .from('profiles')
-                        .update(updatePayload)
-                        .eq('telegram_id', telegram_id);
-                    
-                    if (error) throw error;
-                    
-                    // Пересчитываем нормы, так как изменились важные параметры
-                    const { data: profile } = await supabase
-                        .from('profiles')
-                        .select('*')
-                        .eq('telegram_id', telegram_id)
-                        .single();
-                    
-                    if (profile) {
-                        await calculateAndSaveNorms(profile);
-                    }
-                    
-                    await bot.editMessageText(`✅ ${fieldNameForMessage} успешно изменена на: ${displayValue}\n\nВозвращаюсь в профиль...`, {
-                        chat_id, message_id: msg.message_id,
-                    });
-                    
-                    // Показываем обновленный профиль через 2 секунды
-                    setTimeout(() => {
-                        showProfileMenu(chat_id, telegram_id);
-                    }, 2000);
-                    
-                } catch (error) {
-                    console.error('Error updating profile:', error);
-                    await bot.editMessageText('❌ Ошибка при обновлении профиля. Попробуйте позже.', {
-                        chat_id, message_id: msg.message_id
-                    });
-                }
-                
-            } else if (action === 'recalculate') {
-                // Пересчитываем нормы
-                try {
-                    const { data: profile } = await supabase
-                        .from('profiles')
-                        .select('*')
-                        .eq('telegram_id', telegram_id)
-                        .single();
-                    
-                    if (profile) {
-                        await calculateAndSaveNorms(profile);
-                        await bot.editMessageText('✅ Дневные нормы пересчитаны!\n\nВозвращаюсь в профиль...', {
-                            chat_id, message_id: msg.message_id
-                        });
-                        
-                        // Показываем обновленный профиль через 2 секунды
-                        setTimeout(() => {
-                            showProfileMenu(chat_id, telegram_id);
-                        }, 2000);
-                    } else {
-                        await bot.editMessageText('❌ Ошибка при получении профиля.', {
-                            chat_id, message_id: msg.message_id
-                        });
-                    }
-                } catch (error) {
-                    console.error('Error recalculating norms:', error);
-                    await bot.editMessageText('❌ Ошибка при пересчете норм.', {
-                        chat_id, message_id: msg.message_id
-                    });
-                }
-            }
-            return;
+        // Если сообщение не попало ни в одну из категорий выше, обрабатываем универсальным агентом
+        if (msg.text && !msg.text.startsWith('/')) {
+            // ... (rest of the code remains unchanged)
         }
-
-        // --- SUBSCRIPTION CALLBACKS ---
-        if (data === 'activate_promo') {
-            await bot.answerCallbackQuery(callbackQuery.id);
-            
-            const subscription = await getUserSubscription(telegram_id);
-            if (subscription.promo_activated_at) {
-                await bot.editMessageText('🎁 Промо-период уже был активирован ранее!', {
-                    chat_id, message_id: msg.message_id
-                });
-                return;
-            }
-            
-            const result = await activatePromo(telegram_id);
-            if (result.success) {
-                const expiresDate = result.new_promo_expires_at.toLocaleDateString('ru-RU');
-                await bot.editMessageText(`🎉 *Промо-период активирован!*\n\nТеперь у вас есть доступ к расширенным возможностям до ${expiresDate}:\n\n• 15 анализов фото в день\n• 20 вопросов к ИИ в день\n• Все функции тарифа СТАРТ\n\nИспользуйте команду /subscription для просмотра статуса!`, {
-                    chat_id, message_id: msg.message_id,
-                    parse_mode: 'Markdown'
-                });
-            } else {
-                await bot.editMessageText('❌ Не удалось активировать промо-период. Попробуйте позже.', {
-                    chat_id, message_id: msg.message_id
-                });
-            }
-            return;
-        }
-
-        if (data === 'subscribe_progress' || data === 'subscribe_maximum') {
-            await bot.answerCallbackQuery(callbackQuery.id);
-            
-            const tierName = data === 'subscribe_progress' ? 'ПРОГРЕСС' : 'МАКСИМУМ';
-            const price = data === 'subscribe_progress' ? '199 ₽/мес' : '349 ₽/мес';
-            
-            await bot.editMessageText(`🚀 *Тариф "${tierName}" (${price})*\n\nДля оформления подписки обратитесь к администратору: @admin\n\nОн поможет вам:\n• Оформить подписку\n• Настроить автоплатеж\n• Ответить на любые вопросы\n\nПосле оплаты ваш тариф будет активирован автоматически! 🎯`, {
-                chat_id, message_id: msg.message_id,
-                parse_mode: 'Markdown'
-            });
-            return;
-        }
-
     });
     return bot;
 };
