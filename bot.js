@@ -4060,7 +4060,7 @@ const setupBot = (app) => {
                     try {
                         await bot.editMessageText('📸 Распознаю блюда на фото...', {
                             chat_id: chat_id,
-                            message_id: thinkingMessage.message_id
+                            message_id: undefined
                         });
                     } catch (e) { /* игнорируем ошибки обновления */ }
                 }, 2000);
@@ -4069,7 +4069,7 @@ const setupBot = (app) => {
                     try {
                         await bot.editMessageText('📸 Анализирую состав и калорийность...', {
                             chat_id: chat_id,
-                            message_id: thinkingMessage.message_id
+                            message_id: undefined
                         });
                     } catch (e) { /* игнорируем ошибки обновления */ }
                 }, 6000);
@@ -4089,7 +4089,7 @@ const setupBot = (app) => {
 
                     await bot.editMessageText(responseText, {
                         chat_id: chat_id,
-                        message_id: thinkingMessage.message_id,
+                        message_id: undefined,
                         parse_mode: 'Markdown',
                         reply_markup: {
                             inline_keyboard: [
@@ -4100,20 +4100,15 @@ const setupBot = (app) => {
                 } else {
                      await bot.editMessageText(`😕 ${recognitionResult.reason}`, {
                         chat_id: chat_id,
-                        message_id: thinkingMessage.message_id
+                        message_id: undefined
                     });
                 }
             } catch (error) {
                 console.error("Ошибка при обработке фото:", error);
-                try {
-                    await bot.editMessageText('Произошла внутренняя ошибка. Не удалось обработать фото.', {
-                        chat_id: chat_id,
-                        message_id: thinkingMessage.message_id
-                    });
-                } catch (editError) {
-                    // If editing fails, send a new message
-                    await bot.sendMessage(chat_id, 'Произошла внутренняя ошибка. Не удалось обработать фото.');
-                }
+                await bot.editMessageText('Произошла внутренняя ошибка. Не удалось обработать фото.', {
+                    chat_id: chat_id,
+                    message_id: undefined
+                });
             }
             return;
         }
@@ -4283,11 +4278,16 @@ const setupBot = (app) => {
                                     
                                     responseText += `🎉 Отличная работа! Так держать! 💪`;
 
-                                    await bot.sendMessage(chat_id, responseText, {
+                                    await bot.editMessageText(responseText, {
+                                        chat_id: chat_id,
+                                        message_id: undefined,
                                         parse_mode: 'Markdown'
                                     });
                                 } else {
-                                    await bot.sendMessage(chat_id, `❌ Ошибка при сохранении тренировки: ${result.error}`);
+                                    await bot.editMessageText(`❌ Ошибка при сохранении тренировки: ${result.error}`, {
+                                        chat_id: chat_id,
+                                        message_id: undefined
+                                    });
                                 }
                                 break;
 
@@ -4356,8 +4356,6 @@ const setupBot = (app) => {
         if (msg.document) {
             // СРАЗУ показываем индикатор печатания
             await bot.sendChatAction(chat_id, 'typing');
-            const thinkingMessage = await bot.sendMessage(chat_id, '📄 Получил ваш документ! Анализирую...');
-            
             try {
                 const document = msg.document;
                 const fileInfo = await bot.getFile(document.file_id);
@@ -4370,7 +4368,7 @@ const setupBot = (app) => {
                     if (extractionResult.success) {
                         await bot.editMessageText(`📄 Анализирую извлеченный текст...`, {
                             chat_id: chat_id,
-                            message_id: thinkingMessage.message_id
+                            message_id: undefined
                         });
 
                         const { data: profile } = await supabase
@@ -4405,13 +4403,13 @@ const setupBot = (app) => {
 
                                         await bot.editMessageText(responseText, {
                                             chat_id: chat_id,
-                                            message_id: thinkingMessage.message_id,
+                                            message_id: undefined,
                                             parse_mode: 'Markdown'
                                         });
                                     } else {
                                         await bot.editMessageText(`📄 **Извлеченный текст:**\n\n${extractionResult.text.substring(0, 800)}${extractionResult.text.length > 800 ? '...' : ''}\n\n${analysisData.response_text}`, {
                                             chat_id: chat_id,
-                                            message_id: thinkingMessage.message_id,
+                                            message_id: undefined,
                                             parse_mode: 'Markdown'
                                         });
                                     }
@@ -4421,7 +4419,7 @@ const setupBot = (app) => {
                                     // Другие типы документов
                                     await bot.editMessageText(`📄 **Извлеченный текст:**\n\n${extractionResult.text.substring(0, 800)}${extractionResult.text.length > 800 ? '...' : ''}\n\n${analysisData.response_text}`, {
                                         chat_id: chat_id,
-                                        message_id: thinkingMessage.message_id,
+                                        message_id: undefined,
                                         parse_mode: 'Markdown'
                                     });
                                     break;
@@ -4429,27 +4427,27 @@ const setupBot = (app) => {
                         } else {
                             await bot.editMessageText(`📄 **Извлеченный текст:**\n\n${extractionResult.text.substring(0, 1000)}${extractionResult.text.length > 1000 ? '...' : ''}`, {
                                 chat_id: chat_id,
-                                message_id: thinkingMessage.message_id,
+                                message_id: undefined,
                                 parse_mode: 'Markdown'
                             });
                         }
                     } else {
                         await bot.editMessageText(`❌ ${extractionResult.error}`, {
                             chat_id: chat_id,
-                            message_id: thinkingMessage.message_id
+                            message_id: undefined
                         });
                     }
                 } else {
                     await bot.editMessageText('Пока поддерживаются только изображения документов. Попробуйте отправить фото анализа.', {
                         chat_id: chat_id,
-                        message_id: thinkingMessage.message_id
+                        message_id: undefined
                     });
                 }
             } catch (error) {
                 console.error("Ошибка при обработке документа:", error);
                 await bot.editMessageText('Произошла ошибка при обработке документа.', {
                     chat_id: chat_id,
-                    message_id: thinkingMessage.message_id
+                    message_id: undefined
                 });
             }
             return;
@@ -5051,7 +5049,7 @@ const setupBot = (app) => {
                             } else {
                                 await bot.editMessageText(analysisData.response_text, {
                                     chat_id: chat_id,
-                                    message_id: statusMessage.message_id,
+                                    message_id: undefined,
                                     parse_mode: 'Markdown'
                                 });
                             }
@@ -6034,8 +6032,8 @@ const setupBot = (app) => {
                 await bot.editMessageText('🤔 Похоже, эти кнопки устарели. Пожалуйста, попробуйте добавить еду заново.', {
                     chat_id, message_id: msg.message_id, reply_markup: null
                 });
-                return;
-            }
+            return;
+        }
 
             delete mealConfirmationCache[confirmationId];
 
