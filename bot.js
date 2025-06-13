@@ -2926,8 +2926,8 @@ const sendDailyReports = async () => {
         // Получаем подписки для фильтрации пользователей (платные + PROMO с активными демо)
         const { data: subscriptions, error: subscriptionsError } = await supabase
             .from('user_subscriptions')
-            .select('user_id, tier, promo_expires_at')
-            .or('tier.in.(progress,maximum),and(promo_expires_at.gt.' + new Date().toISOString() + ')');
+            .select('user_id, plan, promo_expires_at')
+            .or('plan.in.(progress,maximum),and(promo_expires_at.gt.' + new Date().toISOString() + ')');
 
         if (subscriptionsError) {
             console.error('Error fetching subscriptions for daily reports:', subscriptionsError);
@@ -3251,8 +3251,8 @@ const sendWeeklyReports = async () => {
         // Получаем подписки для фильтрации VIP пользователей
         const { data: subscriptions, error: subscriptionsError } = await supabase
             .from('user_subscriptions')
-            .select('user_id, tier')
-            .eq('tier', 'maximum');
+            .select('user_id, plan')
+            .eq('plan', 'maximum');
 
         if (subscriptionsError) {
             console.error('Error fetching VIP subscriptions:', subscriptionsError);
@@ -3316,7 +3316,7 @@ const getUserSubscription = async (telegram_id) => {
 
         const { data: subscription, error } = await supabase
             .from('user_subscriptions')
-            .select('tier, expires_at, promo_activated_at, promo_expires_at')
+            .select('plan, expires_at, promo_activated_at, promo_expires_at')
             .eq('user_id', profile.id)
             .single();
 
@@ -3327,9 +3327,18 @@ const getUserSubscription = async (telegram_id) => {
             promo_expires_at: null 
         };
 
-        if (error && error.code !== 'PGRST116') { // PGRST116 - no rows found
+        if (error && error.code !== 'PGRST116') {
              console.error(`Error getting user subscription for ${telegram_id}:`, error);
-             return defaultSubscription;
+             // Попробовать без поля tier, если оно вызывает ошибку
+             const { data: subBackup, error: errorBackup } = await supabase
+                .from('user_subscriptions')
+                .select('expires_at, promo_activated_at, promo_expires_at')
+                .eq('user_id', profile.id)
+                .single();
+            if (errorBackup) {
+                return defaultSubscription;
+            }
+            return { ...defaultSubscription, ...subBackup };
         }
 
         if (!subscription) {
@@ -3337,7 +3346,7 @@ const getUserSubscription = async (telegram_id) => {
         }
 
         // Проверяем, не истек ли основной тариф
-        if (subscription.tier !== 'free' && new Date(subscription.expires_at) < new Date()) {
+        if (subscription.plan !== 'free' && new Date(subscription.expires_at) < new Date()) {
             // Если тариф истек, возвращаем free, но сохраняем данные о промо
             return {
                 ...defaultSubscription,
@@ -3346,7 +3355,12 @@ const getUserSubscription = async (telegram_id) => {
             };
         }
 
-        return subscription;
+        return {
+            tier: subscription.plan || 'free',
+            expires_at: subscription.expires_at,
+            promo_activated_at: subscription.promo_activated_at,
+            promo_expires_at: subscription.promo_expires_at
+        };
     } catch (error) {
         console.error(`Error getting user subscription for ${telegram_id}:`, error);
         return { tier: 'free', expires_at: null, promo_activated_at: null, promo_expires_at: null };
@@ -3363,28 +3377,54 @@ const activatePromo = async (telegram_id) => {
             .single();
 
         if (profileError || !profile) {
-            return { success: false };
+            return { success: false, message: "Профиль не найден." };
         }
 
         const now = new Date();
         const expires = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000); // 3 дня
 
-        const { data, error } = await supabase
+        // Сначала проверяем, есть ли уже подписка
+        const { data: existingSub, error: existingSubError } = await supabase
             .from('user_subscriptions')
-            .upsert({ 
-                user_id: profile.id, 
-                tier: 'free', // на случай если записи нет
-                promo_activated_at: now.toISOString(),
-                promo_expires_at: expires.toISOString()
-            }, { onConflict: 'user_id' })
-            .select();
+            .select('*')
+            .eq('user_id', profile.id)
+            .single();
+            
+        if (existingSubError && existingSubError.code !== 'PGRST116') {
+            throw existingSubError;
+        }
 
-        if (error) throw error;
-        return { success: true, new_promo_expires_at: expires };
+        if (existingSub) {
+            // Если подписка есть, обновляем только промо-даты
+            const { data, error } = await supabase
+                .from('user_subscriptions')
+                .update({
+                    promo_activated_at: now.toISOString(),
+                    promo_expires_at: expires.toISOString()
+                })
+                .eq('user_id', profile.id)
+                .select();
+            if (error) throw error;
+            return { success: true, new_promo_expires_at: expires };
+
+        } else {
+            // Если подписки нет, создаем новую
+            const { data, error } = await supabase
+                .from('user_subscriptions')
+                .insert({ 
+                    user_id: profile.id, 
+                    plan: 'free',
+                    promo_activated_at: now.toISOString(),
+                    promo_expires_at: expires.toISOString()
+                })
+                .select();
+            if (error) throw error;
+            return { success: true, new_promo_expires_at: expires };
+        }
 
     } catch (error) {
         console.error(`Error activating promo for ${telegram_id}:`, error);
-        return { success: false };
+        return { success: false, message: error.message };
     }
 };
 
@@ -4046,39 +4086,22 @@ const setupBot = (app) => {
         // --- Photo Handler ---
         if (msg.photo) {
             await bot.sendChatAction(chat_id, 'typing');
-            showTyping(chat_id, 15000); // 15 секунд для анализа фото
             
-            const thinkingMessage = await bot.sendMessage(chat_id, '📸 Получил ваше фото! Анализирую...');
+            const thinkingMessage = await bot.sendMessage(chat_id, '📸 Анализирую изображение...');
+            const message_id = thinkingMessage.message_id; // <--- Сохраняем ID сообщения
             
             try {
                 const photo = msg.photo[msg.photo.length - 1];
                 const fileInfo = await bot.getFile(photo.file_id);
                 const photoUrl = `https://api.telegram.org/file/bot${token}/${fileInfo.file_path}`;
                 
-                // Постепенное обновление статуса
-                setTimeout(async () => {
-                    try {
-                        await bot.editMessageText('📸 Распознаю блюда на фото...', {
-                            chat_id: chat_id,
-                            message_id: undefined
-                        });
-                    } catch (e) { /* игнорируем ошибки обновления */ }
-                }, 2000);
-                
-                setTimeout(async () => {
-                    try {
-                        await bot.editMessageText('📸 Анализирую состав и калорийность...', {
-                            chat_id: chat_id,
-                            message_id: undefined
-                        });
-                    } catch (e) { /* игнорируем ошибки обновления */ }
-                }, 6000);
-                
+                // Распознавание
                 const recognitionResult = await recognizeFoodFromPhoto(photoUrl);
 
                 if (recognitionResult.success) {
                     const mealData = recognitionResult.data;
                     const confirmationId = crypto.randomUUID();
+                    // Кэшируем данные с привязкой к telegram_id
                     mealConfirmationCache[confirmationId] = { ...mealData, meal_type: 'photo', telegram_id };
 
                     const callback_data = `meal_confirm_${confirmationId}`;
@@ -4089,7 +4112,7 @@ const setupBot = (app) => {
 
                     await bot.editMessageText(responseText, {
                         chat_id: chat_id,
-                        message_id: undefined,
+                        message_id: message_id, // <--- Используем сохраненный ID
                         parse_mode: 'Markdown',
                         reply_markup: {
                             inline_keyboard: [
@@ -4098,16 +4121,16 @@ const setupBot = (app) => {
                         }
                     });
                 } else {
-                     await bot.editMessageText(`😕 ${recognitionResult.reason}`, {
+                     await bot.editMessageText(`😕 ${recognitionResult.error || 'Не удалось распознать еду.'}`, {
                         chat_id: chat_id,
-                        message_id: undefined
+                        message_id: message_id // <--- Используем сохраненный ID
                     });
                 }
             } catch (error) {
                 console.error("Ошибка при обработке фото:", error);
                 await bot.editMessageText('Произошла внутренняя ошибка. Не удалось обработать фото.', {
                     chat_id: chat_id,
-                    message_id: undefined
+                    message_id: message_id // <--- Используем сохраненный ID
                 });
             }
             return;
@@ -4278,16 +4301,9 @@ const setupBot = (app) => {
                                     
                                     responseText += `🎉 Отличная работа! Так держать! 💪`;
 
-                                    await bot.editMessageText(responseText, {
-                                        chat_id: chat_id,
-                                        message_id: undefined,
-                                        parse_mode: 'Markdown'
-                                    });
+                                    await bot.sendMessage(chat_id, responseText, { parse_mode: 'Markdown' });
                                 } else {
-                                    await bot.editMessageText(`❌ Ошибка при сохранении тренировки: ${result.error}`, {
-                                        chat_id: chat_id,
-                                        message_id: undefined
-                                    });
+                                    await bot.sendMessage(chat_id, `❌ Ошибка при сохранении тренировки: ${result.error}`);
                                 }
                                 break;
 
@@ -4356,6 +4372,7 @@ const setupBot = (app) => {
         if (msg.document) {
             // СРАЗУ показываем индикатор печатания
             await bot.sendChatAction(chat_id, 'typing');
+            
             try {
                 const document = msg.document;
                 const fileInfo = await bot.getFile(document.file_id);
@@ -4366,10 +4383,7 @@ const setupBot = (app) => {
                     const extractionResult = await extractTextFromImage(documentUrl);
                     
                     if (extractionResult.success) {
-                        await bot.editMessageText(`📄 Анализирую извлеченный текст...`, {
-                            chat_id: chat_id,
-                            message_id: undefined
-                        });
+                        await bot.sendMessage(chat_id, `📄 Анализирую извлеченный текст...`);
 
                         const { data: profile } = await supabase
                             .from('profiles')
@@ -4401,54 +4415,29 @@ const setupBot = (app) => {
                                         
                                         responseText += `*Это рекомендации ИИ, не замена консультации врача.*`;
 
-                                        await bot.editMessageText(responseText, {
-                                            chat_id: chat_id,
-                                            message_id: undefined,
-                                            parse_mode: 'Markdown'
-                                        });
+                                        await bot.sendMessage(chat_id, responseText, { parse_mode: 'Markdown' });
                                     } else {
-                                        await bot.editMessageText(`📄 **Извлеченный текст:**\n\n${extractionResult.text.substring(0, 800)}${extractionResult.text.length > 800 ? '...' : ''}\n\n${analysisData.response_text}`, {
-                                            chat_id: chat_id,
-                                            message_id: undefined,
-                                            parse_mode: 'Markdown'
-                                        });
+                                        await bot.sendMessage(chat_id, `📄 **Извлеченный текст:**\n\n${extractionResult.text.substring(0, 800)}${extractionResult.text.length > 800 ? '...' : ''}\n\n${analysisData.response_text}`, { parse_mode: 'Markdown' });
                                     }
                                     break;
 
                                 default:
                                     // Другие типы документов
-                                    await bot.editMessageText(`📄 **Извлеченный текст:**\n\n${extractionResult.text.substring(0, 800)}${extractionResult.text.length > 800 ? '...' : ''}\n\n${analysisData.response_text}`, {
-                                        chat_id: chat_id,
-                                        message_id: undefined,
-                                        parse_mode: 'Markdown'
-                                    });
+                                    await bot.sendMessage(chat_id, `📄 **Извлеченный текст:**\n\n${extractionResult.text.substring(0, 800)}${extractionResult.text.length > 800 ? '...' : ''}\n\n${analysisData.response_text}`, { parse_mode: 'Markdown' });
                                     break;
                             }
                         } else {
-                            await bot.editMessageText(`📄 **Извлеченный текст:**\n\n${extractionResult.text.substring(0, 1000)}${extractionResult.text.length > 1000 ? '...' : ''}`, {
-                                chat_id: chat_id,
-                                message_id: undefined,
-                                parse_mode: 'Markdown'
-                            });
+                            await bot.sendMessage(chat_id, `📄 **Извлеченный текст:**\n\n${extractionResult.text.substring(0, 1000)}${extractionResult.text.length > 1000 ? '...' : ''}`, { parse_mode: 'Markdown' });
                         }
                     } else {
-                        await bot.editMessageText(`❌ ${extractionResult.error}`, {
-                            chat_id: chat_id,
-                            message_id: undefined
-                        });
+                        await bot.sendMessage(chat_id, `❌ ${extractionResult.error}`);
                     }
                 } else {
-                    await bot.editMessageText('Пока поддерживаются только изображения документов. Попробуйте отправить фото анализа.', {
-                        chat_id: chat_id,
-                        message_id: undefined
-                    });
+                    await bot.sendMessage(chat_id, 'Пока поддерживаются только изображения документов. Попробуйте отправить фото анализа.');
                 }
             } catch (error) {
                 console.error("Ошибка при обработке документа:", error);
-                await bot.editMessageText('Произошла ошибка при обработке документа.', {
-                    chat_id: chat_id,
-                    message_id: undefined
-                });
+                await bot.sendMessage(chat_id, 'Произошла ошибка при обработке документа.');
             }
             return;
         }
@@ -5840,474 +5829,6 @@ const setupBot = (app) => {
                         }
                     }
                 }
-            }
-            return;
-        }
-        
-        // --- Water Callbacks ---
-        if (action === 'water') {
-            await bot.answerCallbackQuery(callbackQuery.id);
-            
-            if (params[0] === 'add') {
-                const amount = parseInt(params[1]);
-                const result = await addWaterIntake(telegram_id, amount);
-                
-                if (result.success) {
-                    // Обновляем меню с новой статистикой
-                    const waterStats = await getWaterStats(telegram_id, 'today');
-                    const today = new Date().toISOString().split('T')[0];
-                    const todayWater = waterStats.dailyStats[today] || 0;
-                    const percentage = Math.round((todayWater / waterStats.waterNorm) * 100);
-                    const progressBar = createProgressBar(todayWater, waterStats.waterNorm);
-
-                    let waterText = `💧 **Отслеживание воды**\n\n`;
-                    waterText += `✅ Добавлено: ${amount} мл\n`;
-                    waterText += `📊 Сегодня: ${todayWater} / ${waterStats.waterNorm} мл (${percentage}%)\n`;
-                    waterText += `${progressBar}\n\n`;
-                    waterText += `Выберите количество для добавления:`;
-
-                    await bot.editMessageText(waterText, {
-                        chat_id, message_id: msg.message_id,
-                        parse_mode: 'Markdown',
-                        reply_markup: {
-                            inline_keyboard: [
-                                [
-                                    { text: '💧 100 мл', callback_data: 'water_add_100' },
-                                    { text: '💧 200 мл', callback_data: 'water_add_200' }
-                                ],
-                                [
-                                    { text: '💧 250 мл', callback_data: 'water_add_250' },
-                                    { text: '💧 500 мл', callback_data: 'water_add_500' }
-                                ],
-                                [
-                                    { text: '📊 Статистика воды', callback_data: 'water_stats' },
-                                    { text: '✏️ Свое количество', callback_data: 'water_custom' }
-                                ]
-                            ]
-                        }
-                    });
-                } else {
-                    await bot.editMessageText(`❌ Ошибка: ${result.error}`, {
-                        chat_id, message_id: msg.message_id
-                    });
-                }
-            } else if (params[0] === 'stats') {
-                // Показываем статистику воды
-                bot.sendMessage(chat_id, 'За какой период показать статистику воды?', {
-                    reply_markup: {
-                        inline_keyboard: [
-                            [{ text: 'За сегодня', callback_data: 'water_period_today' }],
-                            [{ text: 'За неделю', callback_data: 'water_period_week' }],
-                            [{ text: 'За месяц', callback_data: 'water_period_month' }]
-                        ]
-                    }
-                });
-            } else if (params[0] === 'period') {
-                const period = params[1];
-                const waterStats = await getWaterStats(telegram_id, period);
-                
-                if (waterStats.success) {
-                    let periodText = '';
-                    if (period === 'today') periodText = 'сегодня';
-                    else if (period === 'week') periodText = 'за неделю';
-                    else if (period === 'month') periodText = 'за месяц';
-
-                    let statsText = `💧 **Статистика воды ${periodText}**\n\n`;
-                    
-                    if (waterStats.recordsCount === 0) {
-                        statsText += `За ${periodText} вы еще не добавляли записи о воде.`;
-                    } else {
-                        if (period === 'today') {
-                            const today = new Date().toISOString().split('T')[0];
-                            const todayWater = waterStats.dailyStats[today] || 0;
-                            const percentage = Math.round((todayWater / waterStats.waterNorm) * 100);
-                            const progressBar = createProgressBar(todayWater, waterStats.waterNorm);
-
-                            statsText += `📊 Выпито: ${todayWater} / ${waterStats.waterNorm} мл (${percentage}%)\n`;
-                            statsText += `${progressBar}\n\n`;
-                            
-                            if (percentage >= 100) {
-                                statsText += `🎉 Отлично! Вы выполнили дневную норму воды!`;
-                            } else {
-                                const remaining = waterStats.waterNorm - todayWater;
-                                statsText += `💡 Осталось выпить: ${remaining} мл`;
-                            }
-                        } else {
-                            const daysWithData = Object.keys(waterStats.dailyStats).length;
-                            const avgDaily = Math.round(waterStats.totalWater / Math.max(daysWithData, 1));
-                            
-                            statsText += `📈 Всего выпито: ${waterStats.totalWater} мл\n`;
-                            statsText += `📅 Дней с записями: ${daysWithData}\n`;
-                            statsText += `📊 В среднем в день: ${avgDaily} мл\n`;
-                            statsText += `🎯 Дневная норма: ${waterStats.waterNorm} мл\n\n`;
-                            
-                            const avgPercentage = Math.round((avgDaily / waterStats.waterNorm) * 100);
-                            statsText += `💯 Выполнение нормы: ${avgPercentage}%`;
-                        }
-                    }
-
-                    await bot.editMessageText(statsText, {
-                        chat_id, message_id: msg.message_id,
-                        parse_mode: 'Markdown'
-                    });
-                } else {
-                    await bot.editMessageText(`❌ Ошибка: ${waterStats.error}`, {
-                        chat_id, message_id: msg.message_id
-                    });
-                }
-            } else if (params[0] === 'custom') {
-                // Включаем режим ожидания ввода количества воды
-                // Умная очистка перед вводом воды (оставляем только водные операции)
-                closeConflictingStates(telegram_id, 'water_tracking');
-                waterInputState[telegram_id] = { waiting: true };
-                await bot.editMessageText('Напишите количество воды в миллилитрах (например, 300):', {
-                    chat_id, message_id: msg.message_id,
-                    reply_markup: null
-                });
-            }
-            return;
-        }
-
-        // --- Registration Callbacks ---
-        if (action === 'register' && registrationState[telegram_id]) {
-            const state = registrationState[telegram_id];
-            const value = params[params.length - 1];
-            await bot.answerCallbackQuery(callbackQuery.id);
-
-            if (state.step === 'ask_gender' && params[0] === 'gender') {
-                state.data.gender = value;
-                state.step = 'ask_age';
-                await bot.editMessageText('Принято. Теперь введи свой возраст (полных лет):', {
-                    chat_id: chat_id, message_id: msg.message_id,
-                });
-                return;
-            }
-            
-            if (state.step === 'ask_goal' && params[0] === 'goal') {
-                const goalMapping = { 'lose': 'lose_weight', 'maintain': 'maintain_weight', 'gain': 'gain_mass' };
-                state.data.goal = goalMapping[value];
-                
-                try {
-                    const { data: newProfile, error } = await supabase.from('profiles').insert([{
-                        telegram_id: state.data.telegram_id,
-                        username: state.data.username,
-                        first_name: state.data.first_name,
-                        last_name: state.data.last_name,
-                        chat_id: state.data.chat_id,
-                        gender: state.data.gender,
-                        age: state.data.age,
-                        height_cm: state.data.height_cm,
-                        weight_kg: state.data.weight_kg,
-                        goal: state.data.goal
-                    }]).select().single();
-
-                    if (error) throw error;
-                    delete registrationState[telegram_id];
-                    await calculateAndSaveNorms(newProfile);
-
-                    await bot.editMessageText(`✅ Отлично! Твой профиль сохранён.`, {
-                        chat_id: chat_id, message_id: msg.message_id,
-                    });
-                    
-                    showMainMenu(chat_id, `Теперь ты можешь начать отслеживать калории. Чем займёмся?`);
-                } catch (dbError) {
-                    console.error('Error saving user profile:', dbError.message);
-                    await bot.editMessageText('Не удалось сохранить твой профиль. Что-то пошло не так. Попробуй /start еще раз.', {
-                        chat_id: chat_id, message_id: msg.message_id,
-                    });
-                }
-                return;
-            }
-        }
-
-        // --- Meal Confirmation Callbacks ---
-        if (action === 'meal') {
-            const confirmationAction = params[0]; // 'confirm' or 'cancel'
-            const confirmationId = params[1];
-            await bot.answerCallbackQuery(callbackQuery.id);
-
-            const mealData = mealConfirmationCache[confirmationId];
-
-            if (!mealData) {
-                await bot.editMessageText('🤔 Похоже, эти кнопки устарели. Пожалуйста, попробуйте добавить еду заново.', {
-                    chat_id, message_id: msg.message_id, reply_markup: null
-                });
-            return;
-        }
-
-            delete mealConfirmationCache[confirmationId];
-
-            if (confirmationAction === 'confirm') {
-                try {
-                    const { dish_name, calories, protein, fat, carbs, weight_g, meal_type, telegram_id: meal_telegram_id } = mealData;
-                    const { data: profile, error: profileError } = await supabase
-                        .from('profiles').select('id').eq('telegram_id', meal_telegram_id).single();
-
-                    if (profileError || !profile) throw new Error(`User profile not found for meal save. Telegram ID: ${meal_telegram_id}`);
-
-                    const mealToInsert = {
-                        user_id: profile.id,
-                        description: dish_name,
-                        calories: parseInt(calories),
-                        protein: parseFloat(protein),
-                        fat: parseFloat(fat),
-                        carbs: parseFloat(carbs),
-                        weight_g: parseInt(weight_g),
-                        meal_type: meal_type,
-                        eaten_at: new Date().toISOString()
-                    };
-
-                    console.log(`Сохраняем еду для пользователя ${meal_telegram_id}:`, mealToInsert);
-
-                    const { error: mealError } = await supabase.from('meals').insert([mealToInsert]);
-                    if (mealError) throw mealError;
-
-                    console.log(`✅ Еда успешно сохранена для пользователя ${meal_telegram_id}`);
-                    
-                    // 📊 УЧЕТ ИСПОЛЬЗОВАНИЯ ЛИМИТОВ
-                    if (meal_type === 'manual') {
-                        await incrementUsage(meal_telegram_id, 'manual_entries');
-                        console.log(`📊 Увеличен счетчик ручного ввода для пользователя ${meal_telegram_id}`);
-                    } else if (meal_type === 'photo') {
-                        // Уже учтено в обработке фото
-                        console.log(`📊 Фото уже учтено для пользователя ${meal_telegram_id}`);
-                    }
-
-                    await bot.editMessageText(`✅ Сохранено: ${dish_name} (${calories} ккал).`, {
-                        chat_id, message_id: msg.message_id, reply_markup: null
-                    });
-                } catch(dbError) {
-                    console.error('Error saving meal:', dbError.message);
-                    await bot.editMessageText('Не удалось сохранить приём пищи. Пожалуйста, попробуйте снова.', {
-                        chat_id, message_id: msg.message_id
-                    });
-                }
-            } else { // 'cancel'
-                await bot.editMessageText('Действие отменено.', {
-                    chat_id, message_id: msg.message_id, reply_markup: null
-                });
-            }
-            return;
-        }
-
-        // --- Stats Callbacks ---
-        if (action === 'stats') {
-            const period = params[0];
-            await bot.answerCallbackQuery(callbackQuery.id);
-
-            // 🔒 ПРОВЕРКА ДОСТУПА К СТАТИСТИКЕ ПО ТАРИФАМ
-            const subscription = await getUserSubscription(telegram_id);
-            const tier = subscription.tier;
-            
-            // Проверяем разрешение на просмотр статистики за определенный период
-            if (period === 'week' && tier === 'free') {
-                let upgradeText = `🚫 **Недельная статистика доступна только с тарифами PROMO и выше!**\n\n`;
-                upgradeText += `📊 **Что вы получите:**\n`;
-                upgradeText += `• Статистика за неделю и месяц\n`;
-                upgradeText += `• Детальная аналитика прогресса\n`;
-                upgradeText += `• Графики и тренды\n\n`;
-                
-                if (!subscription.promo_expires_at) {
-                    upgradeText += `🎁 **Попробуйте промо-период бесплатно!**`;
-                    
-                    await bot.editMessageText(upgradeText, {
-                        chat_id, message_id: msg.message_id,
-                        parse_mode: 'Markdown',
-                        reply_markup: {
-                            inline_keyboard: [
-                                [{ text: '🎁 Активировать промо', callback_data: 'activate_promo' }],
-                                [{ text: '📋 Посмотреть тарифы', callback_data: 'subscription_plans' }]
-                            ]
-                        }
-                    });
-                } else {
-                    upgradeText += `Выберите подходящий тариф для продолжения! 🚀`;
-                    await bot.editMessageText(upgradeText, {
-                        chat_id, message_id: msg.message_id,
-                        parse_mode: 'Markdown',
-                        reply_markup: {
-                            inline_keyboard: [
-                                [{ text: '📋 Посмотреть тарифы', callback_data: 'subscription_plans' }]
-                            ]
-                        }
-                    });
-                }
-                return;
-            }
-            
-            if (period === 'month' && (tier === 'free' || tier === 'promo')) {
-                let upgradeText = `🚫 **Месячная статистика доступна только с тарифами PROGRESS и выше!**\n\n`;
-                upgradeText += `📊 **Что вы получите:**\n`;
-                upgradeText += `• Статистика за месяц и год\n`;
-                upgradeText += `• Безлимитный анализ еды\n`;
-                upgradeText += `• Планы тренировок и питания\n`;
-                upgradeText += `• Ежедневные отчеты\n\n`;
-                upgradeText += `Выберите подходящий тариф для продолжения! 🚀`;
-                
-                await bot.editMessageText(upgradeText, {
-                    chat_id, message_id: msg.message_id,
-                    parse_mode: 'Markdown',
-                    reply_markup: {
-                        inline_keyboard: [
-                            [{ text: '📋 Посмотреть тарифы', callback_data: 'subscription_plans' }]
-                        ]
-                    }
-                });
-                return;
-            }
-
-            try {
-                const { data: profile, error: profileError } = await supabase
-                    .from('profiles')
-                    .select('id, first_name, weight_kg, daily_calories, daily_protein, daily_fat, daily_carbs')
-                    .eq('telegram_id', telegram_id)
-                    .single();
-
-                if (profileError || !profile) {
-                    await bot.editMessageText('Не удалось найти ваш профиль. Пожалуйста, попробуйте /start, чтобы всё синхронизировать.', {
-                        chat_id, message_id: msg.message_id
-                    });
-                    return;
-                }
-                
-                let periodText = '';
-                if (period === 'today') periodText = 'сегодня';
-                else if (period === 'week') periodText = 'эту неделю';
-                else if (period === 'month') periodText = 'этот месяц';
-
-                const { data: allMeals, error: mealsError } = await supabase
-                    .from('meals')
-                    .select('calories, protein, fat, carbs, eaten_at, description')
-                    .eq('user_id', profile.id)
-                    .order('eaten_at', { ascending: false });
-
-                if (mealsError) throw mealsError;
-
-                // Фильтрация по периоду
-                let meals = allMeals || [];
-                if (period === 'today' && meals.length > 0) {
-                    const now = new Date();
-                    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
-                    const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
-                    
-                    meals = allMeals.filter(meal => {
-                        const mealDate = new Date(meal.eaten_at);
-                        return mealDate >= todayStart && mealDate <= todayEnd;
-                    });
-                } else if (period === 'week' && meals.length > 0) {
-                    const now = new Date();
-                    const weekStart = new Date(now);
-                    weekStart.setDate(now.getDate() - 7);
-                    
-                    meals = allMeals.filter(meal => new Date(meal.eaten_at) >= weekStart);
-                } else if (period === 'month' && meals.length > 0) {
-                    const now = new Date();
-                    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-                    
-                    meals = allMeals.filter(meal => new Date(meal.eaten_at) >= monthStart);
-                }
-
-                let statsText;
-                if (!meals || meals.length === 0) {
-                    statsText = `За ${periodText}, ${profile.first_name}, у тебя еще не было записей о приемах пищи.`;
-                } else {
-                    const totals = meals.reduce((acc, meal) => {
-                        acc.calories += meal.calories || 0;
-                        acc.protein += meal.protein || 0;
-                        acc.fat += meal.fat || 0;
-                        acc.carbs += meal.carbs || 0;
-                        return acc;
-                    }, { calories: 0, protein: 0, fat: 0, carbs: 0 });
-                    
-                    const formatLine = (consumed, norm) => norm ? `${consumed.toFixed(0)} / ${norm} ` : `${consumed.toFixed(0)} `;
-
-                    const { daily_calories, daily_protein, daily_fat, daily_carbs } = profile;
-                    
-                    // Рассчитываем данные для прогресс-баров долгосрочного трекинга
-                    let dailyAverageText = '';
-                    let totalCaloriesNormText = '';
-                    let totalWaterNormText = '';
-                    
-                    if (period !== 'today') {
-                         // Рассчитываем количество дней
-                         let daysInPeriod = 1;
-                         if (period === 'week') {
-                             daysInPeriod = 7;
-                         } else if (period === 'month') {
-                             const now = new Date();
-                             daysInPeriod = now.getDate(); // дни с начала месяца
-                         }
-                         
-                         const avgCalories = totals.calories / daysInPeriod;
-                         dailyAverageText = `📈 Среднесуточно: *${avgCalories.toFixed(0)} ккал/день*\n\n`;
-                         
-                         // Общий трекер калорий за период
-                         const totalCaloriesNorm = daily_calories * daysInPeriod;
-                         const caloriesPercentage = Math.round((totals.calories / totalCaloriesNorm) * 100);
-                         totalCaloriesNormText = `\n🎯 **Общий прогресс калорий за ${periodText}:**\n` +
-                                               `${totals.calories.toFixed(0)} / ${totalCaloriesNorm} ккал (${caloriesPercentage}%)\n` +
-                                               `${createProgressBar(totals.calories, totalCaloriesNorm)}\n`;
-                    }
-
-                    // Получаем статистику воды
-                    const waterStats = await getWaterStats(telegram_id, period);
-                    let waterText = '';
-                    
-                    if (waterStats.success) {
-                        if (period === 'today') {
-                            const today = new Date().toISOString().split('T')[0];
-                            const todayWater = waterStats.dailyStats[today] || 0;
-                            const waterPercentage = Math.round((todayWater / waterStats.waterNorm) * 100);
-                            waterText = `\n\n💧 Вода: *${todayWater} / ${waterStats.waterNorm} мл (${waterPercentage}%)*\n` +
-                                       `${createProgressBar(todayWater, waterStats.waterNorm)}`;
-                        } else {
-                            const daysWithData = Object.keys(waterStats.dailyStats).length;
-                            if (daysWithData > 0) {
-                                const avgDaily = Math.round(waterStats.totalWater / Math.max(daysWithData, 1));
-                                const avgPercentage = Math.round((avgDaily / waterStats.waterNorm) * 100);
-                                
-                                // Общий трекер воды за период
-                                let daysInPeriod = 1;
-                                if (period === 'week') {
-                                    daysInPeriod = 7;
-                                } else if (period === 'month') {
-                                    const now = new Date();
-                                    daysInPeriod = now.getDate();
-                                }
-                                const totalWaterNorm = waterStats.waterNorm * daysInPeriod;
-                                const totalWaterPercentage = Math.round((waterStats.totalWater / totalWaterNorm) * 100);
-                                
-                                totalWaterNormText = `\n🎯 **Общий прогресс воды за ${periodText}:**\n` +
-                                                   `${waterStats.totalWater} / ${totalWaterNorm} мл (${totalWaterPercentage}%)\n` +
-                                                   `${createProgressBar(waterStats.totalWater, totalWaterNorm)}\n`;
-                                
-                                waterText = `\n\n💧 Вода среднесуточно: *${avgDaily} мл/день (${avgPercentage}% от нормы)*`;
-                            }
-                        }
-                    }
-
-                    statsText = `*Статистика за ${periodText}, ${profile.first_name}:*\n\n` +
-                                `🔥 Калории: *${formatLine(totals.calories, daily_calories)}ккал*\n` +
-                                (period === 'today' ? `${createProgressBar(totals.calories, daily_calories)}\n\n` : '') +
-                                (period === 'today' ? '' : dailyAverageText) +
-                                totalCaloriesNormText +
-                                `\n*Общее количество БЖУ:*\n` +
-                                `🥩 Белки: ${formatLine(totals.protein, daily_protein)}г\n` +
-                                `🥑 Жиры: ${formatLine(totals.fat, daily_fat)}г\n` +
-                                `🍞 Углеводы: ${formatLine(totals.carbs, daily_carbs)}г` +
-                                waterText +
-                                totalWaterNormText;
-                }
-                
-                await bot.editMessageText(statsText, {
-                    chat_id, message_id: msg.message_id, parse_mode: 'Markdown', reply_markup: null
-                });
-
-            } catch (dbError) {
-                console.error('Error fetching stats:', dbError.message);
-                await bot.editMessageText('Произошла ошибка при получении статистики. Попробуйте позже.', {
-                    chat_id, message_id: msg.message_id
-                });
             }
             return;
         }
