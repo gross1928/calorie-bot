@@ -199,25 +199,7 @@ const performHealthCheck = async () => {
     return healthStatus;
 };
 
-// In-memory states
-const registrationState = {};
-const manualAddState = {};
-const mealConfirmationCache = {};
-const workoutPlanState = {};
-const nutritionPlanState = {};
-const waterInputState = {};
-const profileEditState = {};
-const challengeStepsState = {};
-const workoutInjuryState = {};
 
-// Состояние для ожидания вопросов от пользователя
-const questionState = {};
-
-// Состояние для анализа медицинских данных
-const medicalAnalysisState = {};
-
-// Защита от повторных нажатий (debounce для callbacks)
-const callbackDebounce = {};
 
 // Очистка debounce данных каждую минуту
 setInterval(() => {
@@ -230,6 +212,7 @@ setInterval(() => {
 }, 60000);
 
 // Полная очистка всех состояний пользователя
+// ... existing code ...
 const clearUserStates = (telegram_id) => {
     delete registrationState[telegram_id];
     delete manualAddState[telegram_id];
@@ -241,7 +224,11 @@ const clearUserStates = (telegram_id) => {
     delete workoutInjuryState[telegram_id];
     delete questionState[telegram_id];
     delete medicalAnalysisState[telegram_id];
+    delete ingredientEditState[telegram_id];
 };
+
+// Умная очистка состояний - закрывает только конфликтующие операции
+// ... existing code ...
 
 // Умная очистка состояний - закрывает только конфликтующие операции
 const closeConflictingStates = (telegram_id, currentOperation) => {
@@ -540,55 +527,6 @@ const getDateRange = (period) => {
     return { startDate, endDate };
 };
 
-const calculateAndSaveNorms = async (profile) => {
-    try {
-        if (!profile) throw new Error('Profile object is null or undefined.');
-
-        const { telegram_id, gender, age, height_cm, weight_kg, goal } = profile;
-
-        let bmr;
-        if (gender === 'male') {
-            bmr = 88.362 + (13.397 * parseFloat(weight_kg)) + (4.799 * height_cm) - (5.677 * age);
-        } else { // female
-            bmr = 447.593 + (9.247 * parseFloat(weight_kg)) + (3.098 * height_cm) - (4.330 * age);
-        }
-
-        // 🔥 Улучшенный расчет калорий с правильными коэффициентами
-        const activityFactor = 1.4; // Повышен с 1.2 до 1.4 (легкая активность)
-        let daily_calories = bmr * activityFactor;
-
-        switch (goal) {
-            case 'lose_weight':
-                daily_calories *= 0.80; // 20% дефицит для эффективного похудения
-                break;
-            case 'gain_mass':
-                daily_calories *= 1.25; // 25% избыток для набора массы (было 15%)
-                break;
-        }
-
-        const daily_protein = (daily_calories * 0.30) / 4;
-        const daily_fat = (daily_calories * 0.30) / 9;
-        const daily_carbs = (daily_calories * 0.40) / 4;
-
-        const { error: updateError } = await supabase
-            .from('profiles')
-            .update({
-                daily_calories: Math.round(daily_calories),
-                daily_protein: Math.round(daily_protein),
-                daily_fat: Math.round(daily_fat),
-                daily_carbs: Math.round(daily_carbs)
-            })
-            .eq('telegram_id', telegram_id);
-
-        if (updateError) throw updateError;
-        
-        console.log(`✅ Daily norms calculated and saved for user ${telegram_id}`);
-
-    } catch (error) {
-        console.error(`Error calculating norms for user ${profile.telegram_id}:`, error.message);
-    }
-};
-
 const recognizeFoodFromText = async (inputText) => {
     logEvent('info', 'Food text recognition started', { inputLength: inputText.length });
     
@@ -636,148 +574,53 @@ const recognizeFoodFromText = async (inputText) => {
     }, 'Произошла ошибка при анализе вашего описания. Попробуйте еще раз.');
 };
 
-const recognizeFoodFromPhoto = async (photoUrl) => {
-    logEvent('info', 'Food photo recognition started', { photoUrl });
-    
-    return withErrorHandling(async () => {
-        const response = await withTimeout(openai.chat.completions.create({
-            model: 'gpt-4o',
-            messages: [
-                {
-                    role: 'system',
-                    content: `Ты — эксперт-диетолог. Твоя задача — проанализировать изображение еды и вернуть ТОЛЬКО JSON-объект со следующей структурой:
-{
-  "dish_name": "Название блюда на русском языке",
-  "ingredients": ["ингредиент 1", "ингредиент 2", "..."],
-  "weight_g": вес блюда в граммах (число),
-  "calories": калорийность (число),
-  "protein": "белки в граммах (число)",
-  "fat": "жиры в граммах (число)",
-  "carbs": "углеводы в граммах (число)"
-}
-Никакого текста до или после JSON-объекта. Если на фото не еда, верни JSON с "dish_name": "не еда".`
-                },
-                {
-                    role: 'user',
-                    content: [
-                        { type: 'text', text: 'Что на этом изображении? Оцени состав и КБЖУ.' },
-                        {
-                            type: 'image_url',
-                            image_url: {
-                                url: photoUrl,
-                            },
-                        },
-                    ],
-                },
-            ],
-            max_tokens: 500,
-        }), 20000);
 
-        const content = response.choices[0].message.content;
-        const jsonString = content.replace(/```json/g, '').replace(/```/g, '').trim();
-        const parsedContent = JSON.parse(jsonString);
+const formatNutritionPlanAsMessage = (planContent, profileData, planData) => {
+    const { first_name, daily_calories, daily_protein, daily_fat, daily_carbs } = profileData;
+    const { meals_per_day } = planData;
 
-        if (parsedContent.dish_name === 'не еда') {
-            logEvent('warn', 'Non-food photo detected', { photoUrl });
-            return { success: false, reason: 'На фото не удалось распознать еду.' };
+    let message = `🥗 *Индивидуальный план питания для ${first_name}*\n\n`;
+    message += `Вот ваш план, составленный с учетом ваших целей и суточной нормы КБЖУ.\n\n`;
+    message += `*Ваша суточная норма:*\n`;
+    message += `🔥 Калории: *${Math.round(daily_calories)} ккал*\n`;
+    message += `🥩 Белки: *${Math.round(daily_protein)} г*\n`;
+    message += `🥑 Жиры: *${Math.round(daily_fat)} г*\n`;
+    message += `🍞 Углеводы: *${Math.round(daily_carbs)} г*\n\n`;
+    message += `------------------------------------\n\n`;
+
+    // Умный парсинг текстового плана
+    const lines = planContent.split('\n').filter(line => line.trim().length > 0);
+    let currentDay = '';
+    let currentMeal = '';
+
+    lines.forEach(line => {
+        const trimmedLine = line.trim();
+
+        if (trimmedLine.match(/^(День|Day)\s*\d+/i)) {
+            // Новый день
+            if (currentDay) { // Добавляем отступ перед новым днем
+                 message += `\n`;
+            }
+            currentDay = `*${trimmedLine.replace(':', '')}*`;
+            message += `${currentDay}\n`;
+        } else if (trimmedLine.match(/^(Завтрак|Обед|Ужин|Перекус|Breakfast|Lunch|Dinner|Snack)/i)) {
+            // Новый прием пищи
+            currentMeal = `*${trimmedLine.replace(':', '')}*`;
+            message += `\n${currentMeal}\n`;
+        } else if (trimmedLine.startsWith('-') || trimmedLine.match(/^\d+\./)) {
+            // Пункт в приеме пищи
+             const mealItem = trimmedLine.substring(1).trim();
+             message += `  - _${mealItem}_\n`;
+        } else if (trimmedLine.includes('КБЖУ') || trimmedLine.includes('Total')) {
+             // Итоговые КБЖУ за день
+            message += `\n  *${trimmedLine.trim()}*\n`;
         }
+    });
 
-        logEvent('info', 'Food photo recognition successful', { 
-            dish: parsedContent.dish_name, 
-            calories: parsedContent.calories 
-        });
-        return { success: true, data: parsedContent };
+    message += `\n------------------------------------\n`;
+    message += `💡 *Совет:*\n_Не забывайте пить достаточно воды в течение дня и старайтесь придерживаться плана для достижения наилучших результатов._`;
 
-    }, 'Произошла ошибка при анализе изображения. Попробуйте еще раз.');
-};
-
-const generateWorkoutPlan = async (profileData, additionalData) => {
-    try {
-        const { first_name, gender, age, height_cm, weight_kg, goal } = profileData;
-        const { experience, goal: workoutGoal, priority_zones, injuries, location, frequency, duration } = additionalData;
-
-        console.log('Generating personalized workout plan based on predefined programs...');
-        
-        // Определяем тип программы на основе цели
-        let programType = 'bodybuilding'; // по умолчанию
-        if (workoutGoal === 'strength' || workoutGoal === 'powerlifting') {
-            programType = 'powerlifting_and_strength';
-        }
-        
-        // Определяем уровень сложности
-        let level = 'beginner';
-        if (experience === 'intermediate') level = 'intermediate';
-        if (experience === 'advanced') level = 'advanced';
-        
-        // Получаем программу тренировок
-        const genderKey = gender === 'male' ? 'male' : 'female';
-        const baseProgram = USER_WORKOUT_PROGRAMS[programType]?.[genderKey]?.[level];
-        
-        if (!baseProgram) {
-            throw new Error('Подходящая программа тренировок не найдена');
-        }
-
-        // Формируем персональные рекомендации с ИИ
-        const systemPrompt = `Ты - профессиональный фитнес-тренер. На основе готовой программы тренировок создай персональные рекомендации для пользователя.
-
-ПРОФИЛЬ КЛИЕНТА:
-- Имя: ${first_name}
-- Пол: ${gender === 'male' ? 'мужской' : 'женский'}
-- Возраст: ${age} лет
-- Рост: ${height_cm} см
-- Текущий вес: ${weight_kg} кг
-- Цель: ${goal === 'lose_weight' ? 'похудение' : goal === 'gain_mass' ? 'набор массы' : 'поддержание веса'}
-- Опыт: ${experience}
-- Приоритетные зоны: ${priority_zones?.join(', ') || 'нет'}
-- Травмы/ограничения: ${injuries || 'нет'}
-- Место тренировок: ${location}
-- Частота: ${frequency} раз в неделю
-- Время: ${duration} минут
-
-БАЗОВАЯ ПРОГРАММА:
-${JSON.stringify(baseProgram, null, 2)}
-
-ЗАДАЧА:
-1. Адаптируй базовую программу под профиль пользователя
-2. Дай персональные рекомендации по выполнению
-3. Учти травмы и ограничения
-4. Добавь советы по прогрессии нагрузок
-5. Ответ дай в красивом формате Markdown
-
-ФОРМАТ ОТВЕТА:
-🏋️ **Персональный план тренировок для ${first_name}**
-
-**📊 Ваша программа:** ${baseProgram.title}
-**🎯 Описание:** ${baseProgram.description}
-
-**📅 Программа тренировок:**
-[Адаптированная программа на основе базовой]
-
-**💡 Персональные рекомендации:**
-- [Советы с учетом профиля пользователя]
-- [Рекомендации по весам и прогрессии]
-- [Учет травм и ограничений]
-
-**⚠️ Важные замечания:**
-- [Безопасность выполнения]
-- [Частота тренировок]`;
-
-        const response = await openai.chat.completions.create({
-            model: 'gpt-4o-mini',
-            messages: [
-                { role: 'system', content: systemPrompt },
-                { role: 'user', content: `Создай персональные рекомендации на основе готовой программы тренировок.` }
-            ],
-            max_tokens: 1500,
-        });
-
-        const plan = formatWorkoutPlan(response.choices[0].message.content);
-        return { success: true, plan, isTextFormat: true };
-
-    } catch (error) {
-        console.error('Error generating workout plan:', error);
-        return { success: false, error: error.message };
-    }
+    return message;
 };
 
 const generateNutritionPlan = async (profileData, additionalData) => {
@@ -949,6 +792,551 @@ const answerUserQuestion = async (question, profileData = null) => {
     // или для тестов.
     console.warn("Вызвана устаревшая функция answerUserQuestion");
     return { success: false, answer: "Произошла ошибка конфигурации." };
+};
+
+
+
+const generateWorkoutPlanHTML = (planContent, profileData, planData) => {
+    const safeProfileData = {
+        first_name: profileData?.first_name || 'Пользователь',
+        age: profileData?.age || 'не указан',
+        height_cm: profileData?.height_cm || 'не указан',
+        weight_kg: profileData?.weight_kg || 'не указан',
+        goal: profileData?.goal || 'не указана'
+    };
+
+    const safePlanData = {
+        experience: planData?.experience || 'не указан',
+        frequency_per_week: planData?.frequency_per_week || 'не указана'
+    };
+
+    const currentDate = new Date().toLocaleDateString('ru-RU');
+
+    let dayCards = '';
+    if (planContent && typeof planContent === 'string') {
+        const lines = planContent.split('\n');
+        let currentDay = '';
+        let exercises = [];
+
+        lines.forEach(line => {
+            const trimmedLine = line.trim();
+            if (trimmedLine.includes('День') || trimmedLine.includes('DAY')) {
+                if (currentDay && exercises.length > 0) {
+                    dayCards += `<div class="day-card"><h3>${currentDay}</h3><div class="exercises">${exercises.join('')}</div></div>`;
+                }
+                currentDay = trimmedLine;
+                exercises = [];
+            } else if (trimmedLine && !trimmedLine.includes('---') && trimmedLine.length > 3) {
+                exercises.push(`<div class="exercise-text">${trimmedLine}</div>`);
+            }
+        });
+
+        if (currentDay && exercises.length > 0) {
+            dayCards += `<div class="day-card"><h3>${currentDay}</h3><div class="exercises">${exercises.join('')}</div></div>`;
+        }
+    }
+
+    if (!dayCards) {
+        dayCards = `
+            <div class="day-card">
+                <h3>📋 Ваш план тренировок</h3>
+                <div class="exercises">
+                    <div class="exercise-text">${planContent || 'План тренировок генерируется...'}</div>
+                </div>
+            </div>
+        `;
+    }
+
+    return `
+    <!DOCTYPE html>
+    <html lang="ru">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>💪 Персональный план тренировок</title>
+        <style>
+            * {
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }
+            
+            body {
+                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                background: linear-gradient(135deg, #1a4c2b 0%, #0f2818 100%);
+                color: #fff;
+                min-height: 100vh;
+                position: relative;
+                overflow-x: hidden;
+                padding: 20px;
+            }
+            
+            /* Светящаяся нитка */
+            body::before {
+                content: '';
+                position: absolute;
+                top: 0;
+                left: 50%;
+                width: 3px;
+                height: 100%;
+                background: linear-gradient(180deg, 
+                    #ffd700 0%, 
+                    #ffed4e 25%, 
+                    #fff700 50%, 
+                    #ffed4e 75%, 
+                    #ffd700 100%);
+                box-shadow: 0 0 20px #ffd700, 0 0 40px #ffd700, 0 0 60px #ffd700;
+                animation: glow 3s ease-in-out infinite alternate;
+                z-index: 0;
+            }
+            
+            @keyframes glow {
+                from { box-shadow: 0 0 20px #ffd700, 0 0 40px #ffd700, 0 0 60px #ffd700; }
+                to { box-shadow: 0 0 30px #ffd700, 0 0 60px #ffd700, 0 0 90px #ffd700; }
+            }
+            
+            .container {
+                max-width: 900px;
+                margin: 0 auto;
+                background: rgba(26, 76, 43, 0.9);
+                border-radius: 20px;
+                border: 2px solid #ffd700;
+                box-shadow: 0 20px 40px rgba(0,0,0,0.3);
+                backdrop-filter: blur(10px);
+                overflow: hidden;
+                position: relative;
+                z-index: 1;
+            }
+            
+            .header {
+                background: rgba(15, 40, 24, 0.9);
+                color: #fff;
+                padding: 40px 30px;
+                text-align: center;
+                border-bottom: 2px solid #ffd700;
+            }
+            
+            .header h1 {
+                font-size: 2.5rem;
+                margin-bottom: 15px;
+                color: #ffd700;
+                text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+                font-weight: bold;
+            }
+            
+            .header p {
+                font-size: 1.2rem;
+                opacity: 0.9;
+            }
+            
+            .user-info {
+                background: #f8f9fa;
+                padding: 30px;
+                margin: 25px;
+                border-radius: 15px;
+                border: 2px solid #e9ecef;
+            }
+            
+            .user-info h3 {
+                color: #FF6B6B;
+                margin-bottom: 20px;
+                font-size: 1.4rem;
+            }
+            
+            .info-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                gap: 15px;
+            }
+            
+            .info-item {
+                padding: 15px;
+                background: white;
+                border-radius: 10px;
+                border: 1px solid #dee2e6;
+            }
+            
+            .info-label {
+                font-weight: 600;
+                color: #6c757d;
+                font-size: 0.9rem;
+                margin-bottom: 5px;
+            }
+            
+            .info-value {
+                color: #FF6B6B;
+                font-size: 1.1rem;
+                font-weight: 600;
+            }
+            
+            .day-card {
+                margin: 25px;
+                background: rgba(26, 76, 43, 0.8);
+                border-radius: 15px;
+                border: 1px solid #ffd700;
+                overflow: hidden;
+                box-shadow: 0 8px 20px rgba(0,0,0,0.2);
+                transition: transform 0.3s ease, box-shadow 0.3s ease;
+            }
+            
+            .day-card:hover {
+                transform: translateY(-5px);
+                box-shadow: 0 15px 30px rgba(0, 0, 0, 0.3);
+            }
+            
+            .day-card h3 {
+                background: rgba(15, 40, 24, 0.9);
+                color: #ffd700;
+                padding: 20px;
+                margin: 0;
+                font-size: 1.8rem;
+                text-align: center;
+                font-weight: bold;
+                text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.5);
+            }
+            
+            .exercises {
+                padding: 25px;
+            }
+        
+        .exercise-row {
+            display: grid;
+            grid-template-columns: 2fr 1fr 1fr 1fr;
+            gap: 15px;
+            padding: 15px;
+            margin: 10px 0;
+            background: #f8f9fa;
+            border-radius: 10px;
+            border-left: 4px solid #FF6B6B;
+            align-items: center;
+        }
+        
+        .exercise-name {
+            font-weight: 600;
+            color: #333;
+            font-size: 1.1rem;
+        }
+        
+        .exercise-sets, .exercise-reps, .exercise-rest {
+            text-align: center;
+        }
+        
+        .exercise-label {
+            display: block;
+            font-size: 0.8rem;
+            color: #6c757d;
+            margin-bottom: 2px;
+        }
+        
+        .exercise-value {
+            font-weight: 600;
+            color: #FF6B6B;
+            font-size: 1rem;
+        }
+        
+        .rest-day {
+            text-align: center;
+            padding: 30px;
+            font-size: 1.2rem;
+            color: #6c757d;
+            background: #f8f9fa;
+            border-radius: 10px;
+        }
+        
+        .exercise-text {
+            margin: 10px 0;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            border-left: 3px solid #4ECDC4;
+        }
+        
+        .footer {
+            background: #f8f9fa;
+            padding: 30px;
+            text-align: center;
+            border-top: 1px solid #e9ecef;
+        }
+        
+        @media (max-width: 768px) {
+            .exercise-row {
+                grid-template-columns: 1fr;
+                text-align: center;
+            }
+            
+            .container {
+                margin: 10px;
+                border-radius: 15px;
+            }
+            
+            .header {
+                padding: 20px 15px;
+            }
+            
+            .header h1 {
+                font-size: 2rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>💪 Персональный План Тренировок</h1>
+            <p>Создан специально для ${safeProfileData.first_name}</p>
+            <p>📅 ${currentDate}</p>
+        </div>
+        
+        <div class="user-info">
+            <h3>👤 Информация о пользователе</h3>
+            <div class="info-grid">
+                <div class="info-item">
+                    <div class="info-label">Имя</div>
+                    <div class="info-value">${safeProfileData.first_name}</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Возраст</div>
+                    <div class="info-value">${safeProfileData.age} лет</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Рост</div>
+                    <div class="info-value">${safeProfileData.height_cm} см</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Вес</div>
+                    <div class="info-value">${safeProfileData.weight_kg} кг</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Цель</div>
+                    <div class="info-value">${safeProfileData.goal === 'lose_weight' ? 'Похудение' : safeProfileData.goal === 'gain_mass' ? 'Набор массы' : 'Поддержание формы'}</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Опыт тренировок</div>
+                    <div class="info-value">${safePlanData.experience}</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Частота в неделю</div>
+                    <div class="info-value">${safePlanData.frequency_per_week} раз</div>
+                </div>
+            </div>
+        </div>
+        
+        ${dayCards}
+        
+        <div class="footer">
+            <p>🎯 <strong>Следуйте плану регулярно для достижения лучших результатов!</strong></p>
+            <p>💡 Не забывайте о правильном питании и достаточном количестве воды</p>
+            <p>⚠️ При возникновении дискомфорта или боли немедленно прекратите упражнение</p>
+        </div>
+    </div>
+</body>
+</html>
+    `;
+};
+
+// --- OCR for Documents ---
+const extractTextFromImage = async (imageUrl) => {
+    try {
+        console.log('Extracting text from image with OCR...');
+        
+        const response = await openai.chat.completions.create({
+            model: 'gpt-4o',
+            messages: [
+                {
+                    role: 'system',
+                    content: 'Ты эксперт по распознаванию текста. Извлеки весь текст из изображения, сохраняя структуру документа. Если это медицинский анализ, сохрани все показатели и их значения.'
+                },
+                {
+                    role: 'user',
+                    content: [
+                        { type: 'text', text: 'Извлеки весь текст из этого изображения:' },
+                        {
+                            type: 'image_url',
+                            image_url: { url: imageUrl }
+                        }
+                    ]
+                }
+            ],
+            max_tokens: 1000,
+        });
+
+        const extractedText = response.choices[0].message.content;
+        return { success: true, text: extractedText };
+
+    } catch (error) {
+        console.error('Error extracting text from image:', error);
+        return { success: false, error: 'Не удалось извлечь текст из изображения' };
+    }
+};
+
+
+
+// In-memory states
+const registrationState = {};
+const manualAddState = {};
+const mealConfirmationCache = {};
+const ingredientEditState = {};
+const workoutPlanState = {};
+const nutritionPlanState = {};
+const waterInputState = {};
+const profileEditState = {};
+const challengeStepsState = {};
+const workoutInjuryState = {};
+const questionState = {};
+const medicalAnalysisState = {};
+const ingredientEditState = {};
+const callbackDebounce = {};
+
+// Очистка debounce данных каждую минуту
+setInterval(() => {
+    const now = Date.now();
+    for (const key in callbackDebounce) {
+        if (now - callbackDebounce[key] > 60000) { // Удаляем записи старше 1 минуты
+            delete callbackDebounce[key];
+        }
+    }
+}, 60000);
+
+// Функция для красивого форматирования планов тренировок
+const formatWorkoutPlan = (text) => {
+    let formatted = text;
+    
+    // Заменяем ** на *
+    formatted = formatted.replace(/\*\*(.*?)\*\*/g, '*$1*');
+    
+    // Добавляем дополнительные emoji для красоты
+    formatted = formatted.replace(/🏋️/g, '🏋️‍♂️');
+    formatted = formatted.replace(/💪/g, '💪');
+    formatted = formatted.replace(/📊/g, '📊');
+    formatted = formatted.replace(/📅/g, '📅');
+    formatted = formatted.replace(/💡/g, '💡');
+    formatted = formatted.replace(/⚠️/g, '⚠️');
+    formatted = formatted.replace(/🎯/g, '🎯');
+    
+    // Улучшаем форматирование списков
+    formatted = formatted.replace(/^- /gm, '• ');
+    formatted = formatted.replace(/^(\d+)\. /gm, '$1️⃣ ');
+    
+    // Выделяем числа (подходы, повторения, веса)
+    formatted = formatted.replace(/(\d+)\s*x\s*(\d+)/g, '*$1 × $2*');
+    formatted = formatted.replace(/(\d+)\s*(кг|kg)/gi, '*$1 $2*');
+    formatted = formatted.replace(/(\d+)\s*(сек|мин|минут)/gi, '*$1 $2*');
+    
+    // Выделяем дни недели
+    formatted = formatted.replace(/(Понедельник|Вторник|Среда|Четверг|Пятница|Суббота|Воскресенье)/gi, '*$1*');
+    formatted = formatted.replace(/День\s*(\d+)/gi, '*День $1*');
+    
+    // Убираем лишние переносы и пробелы
+    formatted = formatted.replace(/\n\n+/g, '\n\n');
+    formatted = formatted.replace(/^\s+|\s+$/g, '');
+    
+    return formatted;
+};
+
+
+const calculateAndSaveNorms = async (profile) => {
+    try {
+        if (!profile) throw new Error('Profile object is null or undefined.');
+
+        const { telegram_id, gender, age, height_cm, weight_kg, goal } = profile;
+
+        let bmr;
+        if (gender === 'male') {
+            bmr = 88.362 + (13.397 * parseFloat(weight_kg)) + (4.799 * height_cm) - (5.677 * age);
+        } else { // female
+            bmr = 447.593 + (9.247 * parseFloat(weight_kg)) + (3.098 * height_cm) - (4.330 * age);
+        }
+
+        // 🔥 Улучшенный расчет калорий с правильными коэффициентами
+        const activityFactor = 1.4; // Повышен с 1.2 до 1.4 (легкая активность)
+        let daily_calories = bmr * activityFactor;
+
+        switch (goal) {
+            case 'lose_weight':
+                daily_calories *= 0.80; // 20% дефицит для эффективного похудения
+                break;
+            case 'gain_mass':
+                daily_calories *= 1.25; // 25% избыток для набора массы (было 15%)
+                break;
+        }
+
+        const daily_protein = (daily_calories * 0.30) / 4;
+        const daily_fat = (daily_calories * 0.30) / 9;
+        const daily_carbs = (daily_calories * 0.40) / 4;
+
+        const { error: updateError } = await supabase
+            .from('profiles')
+            .update({
+                daily_calories: Math.round(daily_calories),
+                daily_protein: Math.round(daily_protein),
+                daily_fat: Math.round(daily_fat),
+                daily_carbs: Math.round(daily_carbs)
+            })
+            .eq('telegram_id', telegram_id);
+
+        if (updateError) throw updateError;
+        
+        console.log(`✅ Daily norms calculated and saved for user ${telegram_id}`);
+
+    } catch (error) {
+        console.error(`Error calculating norms for user ${profile.telegram_id}:`, error.message);
+    }
+};
+
+
+const recognizeFoodFromPhoto = async (photoUrl) => {
+    logEvent('info', 'Food photo recognition started', { photoUrl });
+    
+    return withErrorHandling(async () => {
+        const response = await withTimeout(openai.chat.completions.create({
+            model: 'gpt-4o',
+            messages: [
+                {
+                    role: 'system',
+                    content: `Ты — эксперт-диетолог. Твоя задача — проанализировать изображение еды и вернуть ТОЛЬКО JSON-объект со следующей структурой:
+{
+  "dish_name": "Название блюда на русском языке",
+  "ingredients": ["ингредиент 1", "ингредиент 2", "..."],
+  "weight_g": вес блюда в граммах (число),
+  "calories": калорийность (число),
+  "protein": "белки в граммах (число)",
+  "fat": "жиры в граммах (число)",
+  "carbs": "углеводы в граммах (число)"
+}
+Никакого текста до или после JSON-объекта. Если на фото не еда, верни JSON с "dish_name": "не еда".`
+                },
+                {
+                    role: 'user',
+                    content: [
+                        { type: 'text', text: 'Что на этом изображении? Оцени состав и КБЖУ.' },
+                        {
+                            type: 'image_url',
+                            image_url: {
+                                url: photoUrl,
+                            },
+                        },
+                    ],
+                },
+            ],
+            max_tokens: 500,
+        }), 20000);
+
+        const content = response.choices[0].message.content;
+        const jsonString = content.replace(/```json/g, '').replace(/```/g, '').trim();
+        const parsedContent = JSON.parse(jsonString);
+
+        if (parsedContent.dish_name === 'не еда') {
+            logEvent('warn', 'Non-food photo detected', { photoUrl });
+            return { success: false, reason: 'На фото не удалось распознать еду.' };
+        }
+
+        logEvent('info', 'Food photo recognition successful', { 
+            dish: parsedContent.dish_name, 
+            calories: parsedContent.calories 
+        });
+        return { success: true, data: parsedContent };
+
+    }, 'Произошла ошибка при анализе изображения. Попробуйте еще раз.');
 };
 
 // --- Voice Message Processing ---
@@ -1292,753 +1680,6 @@ const createWorkoutProgressBar = (completed, planned) => {
     const empty = '⬜'.repeat(emptyBlocks);
     
     return `${filled}${empty} ${percentage}%`;
-};
-
-const generateWorkoutPlanHTML = (planContent, profileData, planData) => {
-    const safeProfileData = {
-        first_name: profileData?.first_name || 'Пользователь',
-        age: profileData?.age || 'не указан',
-        height_cm: profileData?.height_cm || 'не указан',
-        weight_kg: profileData?.weight_kg || 'не указан',
-        goal: profileData?.goal || 'не указана'
-    };
-
-    const safePlanData = {
-        experience: planData?.experience || 'не указан',
-        frequency_per_week: planData?.frequency_per_week || 'не указана'
-    };
-
-    const currentDate = new Date().toLocaleDateString('ru-RU');
-
-    let dayCards = '';
-    if (planContent && typeof planContent === 'string') {
-        const lines = planContent.split('\n');
-        let currentDay = '';
-        let exercises = [];
-
-        lines.forEach(line => {
-            const trimmedLine = line.trim();
-            if (trimmedLine.includes('День') || trimmedLine.includes('DAY')) {
-                if (currentDay && exercises.length > 0) {
-                    dayCards += `<div class="day-card"><h3>${currentDay}</h3><div class="exercises">${exercises.join('')}</div></div>`;
-                }
-                currentDay = trimmedLine;
-                exercises = [];
-            } else if (trimmedLine && !trimmedLine.includes('---') && trimmedLine.length > 3) {
-                exercises.push(`<div class="exercise-text">${trimmedLine}</div>`);
-            }
-        });
-
-        if (currentDay && exercises.length > 0) {
-            dayCards += `<div class="day-card"><h3>${currentDay}</h3><div class="exercises">${exercises.join('')}</div></div>`;
-        }
-    }
-
-    if (!dayCards) {
-        dayCards = `
-            <div class="day-card">
-                <h3>📋 Ваш план тренировок</h3>
-                <div class="exercises">
-                    <div class="exercise-text">${planContent || 'План тренировок генерируется...'}</div>
-                </div>
-            </div>
-        `;
-    }
-
-    return `
-    <!DOCTYPE html>
-    <html lang="ru">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>💪 Персональный план тренировок</title>
-        <style>
-            * {
-                margin: 0;
-                padding: 0;
-                box-sizing: border-box;
-            }
-            
-            body {
-                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-                background: linear-gradient(135deg, #1a4c2b 0%, #0f2818 100%);
-                color: #fff;
-                min-height: 100vh;
-                position: relative;
-                overflow-x: hidden;
-                padding: 20px;
-            }
-            
-            /* Светящаяся нитка */
-            body::before {
-                content: '';
-                position: absolute;
-                top: 0;
-                left: 50%;
-                width: 3px;
-                height: 100%;
-                background: linear-gradient(180deg, 
-                    #ffd700 0%, 
-                    #ffed4e 25%, 
-                    #fff700 50%, 
-                    #ffed4e 75%, 
-                    #ffd700 100%);
-                box-shadow: 0 0 20px #ffd700, 0 0 40px #ffd700, 0 0 60px #ffd700;
-                animation: glow 3s ease-in-out infinite alternate;
-                z-index: 0;
-            }
-            
-            @keyframes glow {
-                from { box-shadow: 0 0 20px #ffd700, 0 0 40px #ffd700, 0 0 60px #ffd700; }
-                to { box-shadow: 0 0 30px #ffd700, 0 0 60px #ffd700, 0 0 90px #ffd700; }
-            }
-            
-            .container {
-                max-width: 900px;
-                margin: 0 auto;
-                background: rgba(26, 76, 43, 0.9);
-                border-radius: 20px;
-                border: 2px solid #ffd700;
-                box-shadow: 0 20px 40px rgba(0,0,0,0.3);
-                backdrop-filter: blur(10px);
-                overflow: hidden;
-                position: relative;
-                z-index: 1;
-            }
-            
-            .header {
-                background: rgba(15, 40, 24, 0.9);
-                color: #fff;
-                padding: 40px 30px;
-                text-align: center;
-                border-bottom: 2px solid #ffd700;
-            }
-            
-            .header h1 {
-                font-size: 2.5rem;
-                margin-bottom: 15px;
-                color: #ffd700;
-                text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
-                font-weight: bold;
-            }
-            
-            .header p {
-                font-size: 1.2rem;
-                opacity: 0.9;
-            }
-            
-            .user-info {
-                background: #f8f9fa;
-                padding: 30px;
-                margin: 25px;
-                border-radius: 15px;
-                border: 2px solid #e9ecef;
-            }
-            
-            .user-info h3 {
-                color: #FF6B6B;
-                margin-bottom: 20px;
-                font-size: 1.4rem;
-            }
-            
-            .info-grid {
-                display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-                gap: 15px;
-            }
-            
-            .info-item {
-                padding: 15px;
-                background: white;
-                border-radius: 10px;
-                border: 1px solid #dee2e6;
-            }
-            
-            .info-label {
-                font-weight: 600;
-                color: #6c757d;
-                font-size: 0.9rem;
-                margin-bottom: 5px;
-            }
-            
-            .info-value {
-                color: #FF6B6B;
-                font-size: 1.1rem;
-                font-weight: 600;
-            }
-            
-            .day-card {
-                margin: 25px;
-                background: rgba(26, 76, 43, 0.8);
-                border-radius: 15px;
-                border: 1px solid #ffd700;
-                overflow: hidden;
-                box-shadow: 0 8px 20px rgba(0,0,0,0.2);
-                transition: transform 0.3s ease, box-shadow 0.3s ease;
-            }
-            
-            .day-card:hover {
-                transform: translateY(-5px);
-                box-shadow: 0 15px 30px rgba(0, 0, 0, 0.3);
-            }
-            
-            .day-card h3 {
-                background: rgba(15, 40, 24, 0.9);
-                color: #ffd700;
-                padding: 20px;
-                margin: 0;
-                font-size: 1.8rem;
-                text-align: center;
-                font-weight: bold;
-                text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.5);
-            }
-            
-            .exercises {
-                padding: 25px;
-            }
-        
-        .exercise-row {
-            display: grid;
-            grid-template-columns: 2fr 1fr 1fr 1fr;
-            gap: 15px;
-            padding: 15px;
-            margin: 10px 0;
-            background: #f8f9fa;
-            border-radius: 10px;
-            border-left: 4px solid #FF6B6B;
-            align-items: center;
-        }
-        
-        .exercise-name {
-            font-weight: 600;
-            color: #333;
-            font-size: 1.1rem;
-        }
-        
-        .exercise-sets, .exercise-reps, .exercise-rest {
-            text-align: center;
-        }
-        
-        .exercise-label {
-            display: block;
-            font-size: 0.8rem;
-            color: #6c757d;
-            margin-bottom: 2px;
-        }
-        
-        .exercise-value {
-            font-weight: 600;
-            color: #FF6B6B;
-            font-size: 1rem;
-        }
-        
-        .rest-day {
-            text-align: center;
-            padding: 30px;
-            font-size: 1.2rem;
-            color: #6c757d;
-            background: #f8f9fa;
-            border-radius: 10px;
-        }
-        
-        .exercise-text {
-            margin: 10px 0;
-            padding: 15px;
-            background: #f8f9fa;
-            border-radius: 8px;
-            border-left: 3px solid #4ECDC4;
-        }
-        
-        .footer {
-            background: #f8f9fa;
-            padding: 30px;
-            text-align: center;
-            border-top: 1px solid #e9ecef;
-        }
-        
-        @media (max-width: 768px) {
-            .exercise-row {
-                grid-template-columns: 1fr;
-                text-align: center;
-            }
-            
-            .container {
-                margin: 10px;
-                border-radius: 15px;
-            }
-            
-            .header {
-                padding: 20px 15px;
-            }
-            
-            .header h1 {
-                font-size: 2rem;
-            }
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1>💪 Персональный План Тренировок</h1>
-            <p>Создан специально для ${safeProfileData.first_name}</p>
-            <p>📅 ${currentDate}</p>
-        </div>
-        
-        <div class="user-info">
-            <h3>👤 Информация о пользователе</h3>
-            <div class="info-grid">
-                <div class="info-item">
-                    <div class="info-label">Имя</div>
-                    <div class="info-value">${safeProfileData.first_name}</div>
-                </div>
-                <div class="info-item">
-                    <div class="info-label">Возраст</div>
-                    <div class="info-value">${safeProfileData.age} лет</div>
-                </div>
-                <div class="info-item">
-                    <div class="info-label">Рост</div>
-                    <div class="info-value">${safeProfileData.height_cm} см</div>
-                </div>
-                <div class="info-item">
-                    <div class="info-label">Вес</div>
-                    <div class="info-value">${safeProfileData.weight_kg} кг</div>
-                </div>
-                <div class="info-item">
-                    <div class="info-label">Цель</div>
-                    <div class="info-value">${safeProfileData.goal === 'lose_weight' ? 'Похудение' : safeProfileData.goal === 'gain_mass' ? 'Набор массы' : 'Поддержание формы'}</div>
-                </div>
-                <div class="info-item">
-                    <div class="info-label">Опыт тренировок</div>
-                    <div class="info-value">${safePlanData.experience}</div>
-                </div>
-                <div class="info-item">
-                    <div class="info-label">Частота в неделю</div>
-                    <div class="info-value">${safePlanData.frequency_per_week} раз</div>
-                </div>
-            </div>
-        </div>
-        
-        ${dayCards}
-        
-        <div class="footer">
-            <p>🎯 <strong>Следуйте плану регулярно для достижения лучших результатов!</strong></p>
-            <p>💡 Не забывайте о правильном питании и достаточном количестве воды</p>
-            <p>⚠️ При возникновении дискомфорта или боли немедленно прекратите упражнение</p>
-        </div>
-    </div>
-</body>
-</html>
-    `;
-};
-
-const generateNutritionPlanHTML = (planContent, profileData, planData) => {
-    const safeProfileData = {
-        first_name: profileData?.first_name || 'Пользователь',
-        age: profileData?.age || 'не указан',
-        height_cm: profileData?.height_cm || 'не указан',
-        weight_kg: profileData?.weight_kg || 'не указан',
-        goal: profileData?.goal || 'не указана',
-        daily_calories: profileData?.daily_calories || 'не указаны',
-        daily_protein: profileData?.daily_protein || 'не указаны',
-        daily_fat: profileData?.daily_fat || 'не указаны',
-        daily_carbs: profileData?.daily_carbs || 'не указаны'
-    };
-
-    const safePlanData = {
-        meals_per_day: planData?.meals_per_day || 'не указано',
-        mealsCount: planData?.mealsCount || 'не указано'
-    };
-
-    const currentDate = new Date().toLocaleDateString('ru-RU');
-
-    // Обработка содержимого плана питания
-    let dailyMeals = '';
-    if (planContent && typeof planContent === 'string') {
-        const lines = planContent.split('\n');
-        let currentDay = '';
-        let currentMeal = '';
-        let mealItems = [];
-
-        lines.forEach(line => {
-            const trimmedLine = line.trim();
-            if (trimmedLine.includes('День') || trimmedLine.includes('DAY')) {
-                if (currentDay && mealItems.length > 0) {
-                    dailyMeals += generateDayCard(currentDay, mealItems);
-                }
-                currentDay = trimmedLine;
-                mealItems = [];
-                currentMeal = '';
-            } else if (trimmedLine.match(/^(Завтрак|Обед|Ужин|Перекус|Breakfast|Lunch|Dinner|Snack)/i)) {
-                if (currentMeal && mealItems.length > 0) {
-                    // Добавляем предыдущий прием пищи
-                }
-                currentMeal = trimmedLine;
-            } else if (trimmedLine && !trimmedLine.includes('---') && trimmedLine.length > 3) {
-                mealItems.push({ meal: currentMeal, item: trimmedLine });
-            }
-        });
-
-        if (currentDay && mealItems.length > 0) {
-            dailyMeals += generateDayCard(currentDay, mealItems);
-        }
-    }
-
-    function generateDayCard(dayTitle, mealItems) {
-        let mealsHtml = '';
-        let currentMeal = '';
-        
-        mealItems.forEach(item => {
-            if (item.meal && item.meal !== currentMeal) {
-                if (currentMeal) mealsHtml += '</div>';
-                mealsHtml += `<div class="meal-title">${item.meal}</div><div class="meal-group">`;
-                currentMeal = item.meal;
-            }
-            mealsHtml += `<div class="meal-item">${item.item}</div>`;
-        });
-        
-        if (currentMeal) mealsHtml += '</div>';
-        
-        return `
-            <div class="day-card">
-                <h3>${dayTitle}</h3>
-                <div class="meals">
-                    ${mealsHtml}
-                </div>
-            </div>
-        `;
-    }
-
-    if (!dailyMeals) {
-        dailyMeals = `
-            <div class="day-card">
-                <h3>📋 Ваш план питания</h3>
-                <div class="meals">
-                    <div class="meal-item">${planContent || 'План питания генерируется...'}</div>
-                </div>
-            </div>
-        `;
-    }
-
-
-
-    return `
-    <!DOCTYPE html>
-    <html lang="ru">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>🥗 Персональный план питания</title>
-        <style>
-            * {
-                margin: 0;
-                padding: 0;
-                box-sizing: border-box;
-            }
-            
-            body {
-                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-                background: linear-gradient(135deg, #1a4c2b 0%, #0f2818 100%);
-                color: #fff;
-                min-height: 100vh;
-                position: relative;
-                overflow-x: hidden;
-                padding: 20px;
-            }
-            
-            /* Светящаяся нитка */
-            body::before {
-                content: '';
-                position: absolute;
-                top: 0;
-                left: 50%;
-                width: 3px;
-                height: 100%;
-                background: linear-gradient(180deg, 
-                    #ffd700 0%, 
-                    #ffed4e 25%, 
-                    #fff700 50%, 
-                    #ffed4e 75%, 
-                    #ffd700 100%);
-                box-shadow: 0 0 20px #ffd700, 0 0 40px #ffd700, 0 0 60px #ffd700;
-                animation: glow 3s ease-in-out infinite alternate;
-                z-index: 0;
-            }
-            
-            @keyframes glow {
-                from { box-shadow: 0 0 20px #ffd700, 0 0 40px #ffd700, 0 0 60px #ffd700; }
-                to { box-shadow: 0 0 30px #ffd700, 0 0 60px #ffd700, 0 0 90px #ffd700; }
-            }
-            
-            .container {
-                max-width: 900px;
-                margin: 0 auto;
-                background: rgba(26, 76, 43, 0.9);
-                border-radius: 20px;
-                border: 2px solid #ffd700;
-                box-shadow: 0 20px 40px rgba(0,0,0,0.3);
-                backdrop-filter: blur(10px);
-                overflow: hidden;
-                position: relative;
-                z-index: 1;
-            }
-            
-            .header {
-                background: rgba(15, 40, 24, 0.9);
-                color: #fff;
-                padding: 40px 30px;
-                text-align: center;
-                border-bottom: 2px solid #ffd700;
-            }
-            
-            .header h1 {
-                font-size: 2.5rem;
-                margin-bottom: 15px;
-                color: #ffd700;
-                text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
-                font-weight: bold;
-            }
-            
-            .header p {
-                font-size: 1.2rem;
-                opacity: 0.9;
-            }
-            
-            .user-info {
-                background: rgba(15, 40, 24, 0.8);
-                padding: 30px;
-                margin: 25px;
-                border-radius: 15px;
-                border: 1px solid #ffd700;
-                box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
-            }
-            
-            .user-info h3 {
-                color: #ffd700;
-                margin-bottom: 20px;
-                font-size: 1.4rem;
-                font-weight: bold;
-            }
-            
-            .info-grid {
-                display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-                gap: 15px;
-            }
-            
-            .info-item {
-                padding: 15px;
-                background: white;
-                border-radius: 10px;
-                border: 1px solid #dee2e6;
-            }
-            
-            .info-label {
-                font-weight: 600;
-                color: #6c757d;
-                font-size: 0.9rem;
-                margin-bottom: 5px;
-            }
-            
-            .info-value {
-                color: #4CAF50;
-                font-size: 1.1rem;
-                font-weight: 600;
-            }
-            
-            .day-card {
-                margin: 25px;
-                background: rgba(26, 76, 43, 0.8);
-                border-radius: 15px;
-                border: 1px solid #ffd700;
-                overflow: hidden;
-                box-shadow: 0 8px 20px rgba(0,0,0,0.2);
-                transition: transform 0.3s ease, box-shadow 0.3s ease;
-            }
-            
-            .day-card:hover {
-                transform: translateY(-5px);
-                box-shadow: 0 15px 30px rgba(0, 0, 0, 0.3);
-            }
-            
-            .day-card h3 {
-                background: rgba(15, 40, 24, 0.9);
-                color: #ffd700;
-                padding: 20px;
-                margin: 0;
-                font-size: 1.8rem;
-                text-align: center;
-                font-weight: bold;
-                text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.5);
-            }
-            
-            .meals {
-                padding: 25px;
-            }
-            
-            .meal-title {
-                margin: 20px 0 10px 0;
-                font-size: 1.3rem;
-                font-weight: bold;
-                color: #ffd700;
-                padding: 12px 16px;
-                background: rgba(15, 40, 24, 0.8);
-                border-radius: 10px;
-                border-left: 4px solid #ffd700;
-                text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.3);
-            }
-            
-            .meal-item {
-                margin: 12px 0;
-                padding: 18px;
-                background: rgba(15, 40, 24, 0.6);
-                border-radius: 12px;
-                border-left: 4px solid #ffd700;
-                transition: background 0.3s ease;
-                color: #e8f5e8;
-                line-height: 1.6;
-            }
-            
-            .meal-item:hover {
-                background: rgba(15, 40, 24, 0.8);
-            }
-            
-            .footer {
-                background: #333;
-                color: white;
-                padding: 25px;
-                text-align: center;
-            }
-            
-            .footer p {
-                margin: 5px 0;
-            }
-            
-            @media (max-width: 768px) {
-                .container {
-                    margin: 10px;
-                    border-radius: 15px;
-                }
-                
-                .info-grid {
-                    grid-template-columns: 1fr;
-                }
-                
-                .header {
-                    padding: 25px 20px;
-                }
-                
-                .header h1 {
-                    font-size: 2rem;
-                }
-                
-                .user-info, .day-card {
-                    margin: 15px;
-                    padding: 20px;
-                }
-            }
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <div class="header">
-                <h1>🥗 Персональный план питания</h1>
-                <div class="user-info">
-                    <div class="user-details">
-                        <p><strong>Имя:</strong> ${safeProfileData.first_name}</p>
-                        <p><strong>Цель:</strong> ${safeProfileData.goal === 'lose_weight' || safeProfileData.goal === 'lose' ? 'Похудение' : 
-                            safeProfileData.goal === 'gain_mass' || safeProfileData.goal === 'gain' ? 'Набор мышечной массы' : 
-                            safeProfileData.goal === 'maintain' ? 'Поддержание веса' : 'Улучшение здоровья'}</p>
-                        <p><strong>Дневная норма калорий:</strong> ${safeProfileData.daily_calories} ккал</p>
-                        <p><strong>План создан:</strong> ${currentDate}</p>
-                    </div>
-                </div>
-                <div class="content">
-                    ${planContent}
-                </div>
-            </div>
-        </div>
-    </body>
-</html>
-    `;
-};
-
-
-// Отправка плана в виде HTML документа
-const sendPlanAsDocument = async (chatId, planType, htmlContent, filename) => {
-    try {
-        // Создаем временный файл
-        const fs = require('fs');
-        const path = require('path');
-        const tempDir = path.join(__dirname, 'temp');
-        
-        // Создаем папку temp если её нет
-        if (!fs.existsSync(tempDir)) {
-            fs.mkdirSync(tempDir);
-        }
-        
-        const filePath = path.join(tempDir, filename);
-        
-        // Записываем HTML в файл
-        fs.writeFileSync(filePath, htmlContent, 'utf8');
-        
-        // Отправляем файл
-        await bot.sendDocument(chatId, filePath, {
-            caption: `📄 Ваш персональный ${planType === 'workout' ? 'план тренировок' : 'план питания'}!\n\n✨ Откройте файл в браузере для лучшего просмотра\n📱 Можно сохранить и распечатать\n🎯 Следуйте плану для достижения целей!`,
-            reply_markup: {
-                inline_keyboard: [[
-                    { text: '📊 Отчет за день', callback_data: 'daily_report' },
-                    { text: '🏠 Главное меню', callback_data: 'main_menu' }
-                ]]
-            }
-        });
-        
-        // Удаляем временный файл
-        setTimeout(() => {
-            if (fs.existsSync(filePath)) {
-                fs.unlinkSync(filePath);
-            }
-        }, 5000);
-        
-    } catch (error) {
-        console.error('Ошибка отправки документа:', error);
-        await bot.sendMessage(chatId, '❌ Ошибка при создании документа. Попробуйте еще раз.');
-    }
-};
-
-// --- OCR for Documents ---
-const extractTextFromImage = async (imageUrl) => {
-    try {
-        console.log('Extracting text from image with OCR...');
-        
-        const response = await openai.chat.completions.create({
-            model: 'gpt-4o',
-            messages: [
-                {
-                    role: 'system',
-                    content: 'Ты эксперт по распознаванию текста. Извлеки весь текст из изображения, сохраняя структуру документа. Если это медицинский анализ, сохрани все показатели и их значения.'
-                },
-                {
-                    role: 'user',
-                    content: [
-                        { type: 'text', text: 'Извлеки весь текст из этого изображения:' },
-                        {
-                            type: 'image_url',
-                            image_url: { url: imageUrl }
-                        }
-                    ]
-                }
-            ],
-            max_tokens: 1000,
-        });
-
-        const extractedText = response.choices[0].message.content;
-        return { success: true, text: extractedText };
-
-    } catch (error) {
-        console.error('Error extracting text from image:', error);
-        return { success: false, error: 'Не удалось извлечь текст из изображения' };
-    }
 };
 
 // --- Water Tracking Functions ---
@@ -2926,8 +2567,8 @@ const sendDailyReports = async () => {
         // Получаем подписки для фильтрации пользователей (платные + PROMO с активными демо)
         const { data: subscriptions, error: subscriptionsError } = await supabase
             .from('user_subscriptions')
-            .select('user_id, plan, promo_expires_at')
-            .or('plan.in.(progress,maximum),and(promo_expires_at.gt.' + new Date().toISOString() + ')');
+            .select('user_id, tier, promo_expires_at')
+            .or('tier.in.(progress,maximum),and(promo_expires_at.gt.' + new Date().toISOString() + ')');
 
         if (subscriptionsError) {
             console.error('Error fetching subscriptions for daily reports:', subscriptionsError);
@@ -3251,8 +2892,8 @@ const sendWeeklyReports = async () => {
         // Получаем подписки для фильтрации VIP пользователей
         const { data: subscriptions, error: subscriptionsError } = await supabase
             .from('user_subscriptions')
-            .select('user_id, plan')
-            .eq('plan', 'maximum');
+            .select('user_id, tier')
+            .eq('tier', 'maximum');
 
         if (subscriptionsError) {
             console.error('Error fetching VIP subscriptions:', subscriptionsError);
@@ -3316,7 +2957,7 @@ const getUserSubscription = async (telegram_id) => {
 
         const { data: subscription, error } = await supabase
             .from('user_subscriptions')
-            .select('plan, expires_at, promo_activated_at, promo_expires_at')
+            .select('tier, expires_at, promo_activated_at, promo_expires_at')
             .eq('user_id', profile.id)
             .single();
 
@@ -3327,18 +2968,9 @@ const getUserSubscription = async (telegram_id) => {
             promo_expires_at: null 
         };
 
-        if (error && error.code !== 'PGRST116') {
+        if (error && error.code !== 'PGRST116') { // PGRST116 - no rows found
              console.error(`Error getting user subscription for ${telegram_id}:`, error);
-             // Попробовать без поля tier, если оно вызывает ошибку
-             const { data: subBackup, error: errorBackup } = await supabase
-                .from('user_subscriptions')
-                .select('expires_at, promo_activated_at, promo_expires_at')
-                .eq('user_id', profile.id)
-                .single();
-            if (errorBackup) {
-                return defaultSubscription;
-            }
-            return { ...defaultSubscription, ...subBackup };
+             return defaultSubscription;
         }
 
         if (!subscription) {
@@ -3346,7 +2978,7 @@ const getUserSubscription = async (telegram_id) => {
         }
 
         // Проверяем, не истек ли основной тариф
-        if (subscription.plan !== 'free' && new Date(subscription.expires_at) < new Date()) {
+        if (subscription.tier !== 'free' && new Date(subscription.expires_at) < new Date()) {
             // Если тариф истек, возвращаем free, но сохраняем данные о промо
             return {
                 ...defaultSubscription,
@@ -3355,12 +2987,7 @@ const getUserSubscription = async (telegram_id) => {
             };
         }
 
-        return {
-            tier: subscription.plan || 'free',
-            expires_at: subscription.expires_at,
-            promo_activated_at: subscription.promo_activated_at,
-            promo_expires_at: subscription.promo_expires_at
-        };
+        return subscription;
     } catch (error) {
         console.error(`Error getting user subscription for ${telegram_id}:`, error);
         return { tier: 'free', expires_at: null, promo_activated_at: null, promo_expires_at: null };
@@ -3377,54 +3004,28 @@ const activatePromo = async (telegram_id) => {
             .single();
 
         if (profileError || !profile) {
-            return { success: false, message: "Профиль не найден." };
+            return { success: false };
         }
 
         const now = new Date();
         const expires = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000); // 3 дня
 
-        // Сначала проверяем, есть ли уже подписка
-        const { data: existingSub, error: existingSubError } = await supabase
+        const { data, error } = await supabase
             .from('user_subscriptions')
-            .select('*')
-            .eq('user_id', profile.id)
-            .single();
-            
-        if (existingSubError && existingSubError.code !== 'PGRST116') {
-            throw existingSubError;
-        }
+            .upsert({ 
+                user_id: profile.id, 
+                tier: 'free', // на случай если записи нет
+                promo_activated_at: now.toISOString(),
+                promo_expires_at: expires.toISOString()
+            }, { onConflict: 'user_id' })
+            .select();
 
-        if (existingSub) {
-            // Если подписка есть, обновляем только промо-даты
-            const { data, error } = await supabase
-                .from('user_subscriptions')
-                .update({
-                    promo_activated_at: now.toISOString(),
-                    promo_expires_at: expires.toISOString()
-                })
-                .eq('user_id', profile.id)
-                .select();
-            if (error) throw error;
-            return { success: true, new_promo_expires_at: expires };
-
-        } else {
-            // Если подписки нет, создаем новую
-            const { data, error } = await supabase
-                .from('user_subscriptions')
-                .insert({ 
-                    user_id: profile.id, 
-                    plan: 'free',
-                    promo_activated_at: now.toISOString(),
-                    promo_expires_at: expires.toISOString()
-                })
-                .select();
-            if (error) throw error;
-            return { success: true, new_promo_expires_at: expires };
-        }
+        if (error) throw error;
+        return { success: true, new_promo_expires_at: expires };
 
     } catch (error) {
         console.error(`Error activating promo for ${telegram_id}:`, error);
-        return { success: false, message: error.message };
+        return { success: false };
     }
 };
 
@@ -4086,51 +3687,72 @@ const setupBot = (app) => {
         // --- Photo Handler ---
         if (msg.photo) {
             await bot.sendChatAction(chat_id, 'typing');
+            showTyping(chat_id, 15000); // 15 секунд для анализа фото
             
-            const thinkingMessage = await bot.sendMessage(chat_id, '📸 Анализирую изображение...');
-            const message_id = thinkingMessage.message_id; // <--- Сохраняем ID сообщения
+            const thinkingMessage = await bot.sendMessage(chat_id, '📸 Получил ваше фото! Анализирую...');
             
             try {
                 const photo = msg.photo[msg.photo.length - 1];
                 const fileInfo = await bot.getFile(photo.file_id);
                 const photoUrl = `https://api.telegram.org/file/bot${token}/${fileInfo.file_path}`;
                 
-                // Распознавание
+                // Постепенное обновление статуса
+                setTimeout(async () => {
+                    try {
+                        await bot.editMessageText('📸 Распознаю блюда на фото...', {
+                            chat_id: chat_id,
+                            message_id: undefined
+                        });
+                    } catch (e) { /* игнорируем ошибки обновления */ }
+                }, 2000);
+                
+                setTimeout(async () => {
+                    try {
+                        await bot.editMessageText('📸 Анализирую состав и калорийность...', {
+                            chat_id: chat_id,
+                            message_id: undefined
+                        });
+                    } catch (e) { /* игнорируем ошибки обновления */ }
+                }, 6000);
+                
                 const recognitionResult = await recognizeFoodFromPhoto(photoUrl);
 
                 if (recognitionResult.success) {
                     const mealData = recognitionResult.data;
                     const confirmationId = crypto.randomUUID();
-                    // Кэшируем данные с привязкой к telegram_id
                     mealConfirmationCache[confirmationId] = { ...mealData, meal_type: 'photo', telegram_id };
 
-                    const callback_data = `meal_confirm_${confirmationId}`;
-                    const cancel_callback_data = `meal_cancel_${confirmationId}`;
-                    const ingredientsString = mealData.ingredients.join(', ');
+                                        const ingredientsString = mealData.ingredients.join(', ');
 
-                    const responseText = `*${mealData.dish_name}* (Примерно ${mealData.weight_g} г)\n\n*Ингредиенты:* ${ingredientsString}\n*КБЖУ:*\n- Калории: ${mealData.calories} ккал\n- Белки: ${mealData.protein} г\n- Жиры: ${mealData.fat} г\n- Углеводы: ${mealData.carbs} г\n\nСохранить этот приём пищи?`;
+                    const responseText = `*${mealData.dish_name}* (Примерно ${mealData.weight_g} г)\n\n*Ингредиенты:* ${ingredientsString}\n*КБЖУ:*\n- Калории: ${mealData.calories} ккал\n- Белки: ${mealData.protein} г\n- Жиры: ${mealData.fat} г\n- Углеводы: ${mealData.carbs} г\n\nНажмите "Сохранить" или внесите правки.`;
 
                     await bot.editMessageText(responseText, {
                         chat_id: chat_id,
-                        message_id: message_id, // <--- Используем сохраненный ID
+                        message_id: thinkingMessage.message_id,
                         parse_mode: 'Markdown',
                         reply_markup: {
                             inline_keyboard: [
-                                [{ text: '✅ Да, сохранить', callback_data }, { text: '❌ Нет, отменить', callback_data: cancel_callback_data }]
+                                [
+                                    { text: '✅ Да, сохранить', callback_data: `meal_confirm_${confirmationId}` }
+                                ],
+                                [
+                                    { text: '⚖️ Изменить граммы', callback_data: `meal_edit_grams_${confirmationId}` },
+                                    { text: '✏️ Изменить ингредиенты', callback_data: `meal_edit_ingredients_${confirmationId}` }
+                                ]
                             ]
                         }
                     });
                 } else {
-                     await bot.editMessageText(`😕 ${recognitionResult.error || 'Не удалось распознать еду.'}`, {
+                     await bot.editMessageText(`😕 ${recognitionResult.reason}`, {
                         chat_id: chat_id,
-                        message_id: message_id // <--- Используем сохраненный ID
+                        message_id: undefined
                     });
                 }
             } catch (error) {
                 console.error("Ошибка при обработке фото:", error);
                 await bot.editMessageText('Произошла внутренняя ошибка. Не удалось обработать фото.', {
                     chat_id: chat_id,
-                    message_id: message_id // <--- Используем сохраненный ID
+                    message_id: undefined
                 });
             }
             return;
@@ -4301,9 +3923,16 @@ const setupBot = (app) => {
                                     
                                     responseText += `🎉 Отличная работа! Так держать! 💪`;
 
-                                    await bot.sendMessage(chat_id, responseText, { parse_mode: 'Markdown' });
+                                    await bot.editMessageText(responseText, {
+                                        chat_id: chat_id,
+                                        message_id: undefined,
+                                        parse_mode: 'Markdown'
+                                    });
                                 } else {
-                                    await bot.sendMessage(chat_id, `❌ Ошибка при сохранении тренировки: ${result.error}`);
+                                    await bot.editMessageText(`❌ Ошибка при сохранении тренировки: ${result.error}`, {
+                                        chat_id: chat_id,
+                                        message_id: undefined
+                                    });
                                 }
                                 break;
 
@@ -4372,7 +4001,6 @@ const setupBot = (app) => {
         if (msg.document) {
             // СРАЗУ показываем индикатор печатания
             await bot.sendChatAction(chat_id, 'typing');
-            
             try {
                 const document = msg.document;
                 const fileInfo = await bot.getFile(document.file_id);
@@ -4383,7 +4011,10 @@ const setupBot = (app) => {
                     const extractionResult = await extractTextFromImage(documentUrl);
                     
                     if (extractionResult.success) {
-                        await bot.sendMessage(chat_id, `📄 Анализирую извлеченный текст...`);
+                        await bot.editMessageText(`📄 Анализирую извлеченный текст...`, {
+                            chat_id: chat_id,
+                            message_id: undefined
+                        });
 
                         const { data: profile } = await supabase
                             .from('profiles')
@@ -4415,29 +4046,54 @@ const setupBot = (app) => {
                                         
                                         responseText += `*Это рекомендации ИИ, не замена консультации врача.*`;
 
-                                        await bot.sendMessage(chat_id, responseText, { parse_mode: 'Markdown' });
+                                        await bot.editMessageText(responseText, {
+                                            chat_id: chat_id,
+                                            message_id: undefined,
+                                            parse_mode: 'Markdown'
+                                        });
                                     } else {
-                                        await bot.sendMessage(chat_id, `📄 **Извлеченный текст:**\n\n${extractionResult.text.substring(0, 800)}${extractionResult.text.length > 800 ? '...' : ''}\n\n${analysisData.response_text}`, { parse_mode: 'Markdown' });
+                                        await bot.editMessageText(`📄 **Извлеченный текст:**\n\n${extractionResult.text.substring(0, 800)}${extractionResult.text.length > 800 ? '...' : ''}\n\n${analysisData.response_text}`, {
+                                            chat_id: chat_id,
+                                            message_id: undefined,
+                                            parse_mode: 'Markdown'
+                                        });
                                     }
                                     break;
 
                                 default:
                                     // Другие типы документов
-                                    await bot.sendMessage(chat_id, `📄 **Извлеченный текст:**\n\n${extractionResult.text.substring(0, 800)}${extractionResult.text.length > 800 ? '...' : ''}\n\n${analysisData.response_text}`, { parse_mode: 'Markdown' });
+                                    await bot.editMessageText(`📄 **Извлеченный текст:**\n\n${extractionResult.text.substring(0, 800)}${extractionResult.text.length > 800 ? '...' : ''}\n\n${analysisData.response_text}`, {
+                                        chat_id: chat_id,
+                                        message_id: undefined,
+                                        parse_mode: 'Markdown'
+                                    });
                                     break;
                             }
                         } else {
-                            await bot.sendMessage(chat_id, `📄 **Извлеченный текст:**\n\n${extractionResult.text.substring(0, 1000)}${extractionResult.text.length > 1000 ? '...' : ''}`, { parse_mode: 'Markdown' });
+                            await bot.editMessageText(`📄 **Извлеченный текст:**\n\n${extractionResult.text.substring(0, 1000)}${extractionResult.text.length > 1000 ? '...' : ''}`, {
+                                chat_id: chat_id,
+                                message_id: undefined,
+                                parse_mode: 'Markdown'
+                            });
                         }
                     } else {
-                        await bot.sendMessage(chat_id, `❌ ${extractionResult.error}`);
+                        await bot.editMessageText(`❌ ${extractionResult.error}`, {
+                            chat_id: chat_id,
+                            message_id: undefined
+                        });
                     }
                 } else {
-                    await bot.sendMessage(chat_id, 'Пока поддерживаются только изображения документов. Попробуйте отправить фото анализа.');
+                    await bot.editMessageText('Пока поддерживаются только изображения документов. Попробуйте отправить фото анализа.', {
+                        chat_id: chat_id,
+                        message_id: undefined
+                    });
                 }
             } catch (error) {
                 console.error("Ошибка при обработке документа:", error);
-                await bot.sendMessage(chat_id, 'Произошла ошибка при обработке документа.');
+                await bot.editMessageText('Произошла ошибка при обработке документа.', {
+                    chat_id: chat_id,
+                    message_id: undefined
+                });
             }
             return;
         }
@@ -4451,7 +4107,124 @@ const setupBot = (app) => {
         const isEditingProfile = profileEditState[telegram_id]?.field;
         const isWaitingForInjuryDetails = workoutInjuryState[telegram_id]?.waiting;
 
-        if (isWaitingForQuestion) {
+        // ... существующий код ...
+        const isEditingProfile = profileEditState[telegram_id]?.field;
+        const isWaitingForInjuryDetails = workoutInjuryState[telegram_id]?.waiting;
+        const ingredientEdit = ingredientEditState[telegram_id]; // <<< ДОБАВЬТЕ ЭТУ СТРОКУ
+
+        // <<< НАЧАЛО БЛОКА ОБРАБОТКИ РЕДАКТИРОВАНИЯ >>>
+        if (ingredientEdit) {
+            const { stage, message_id, photo_message_id } = ingredientEdit;
+
+            if (stage === 'waiting_for_grams') {
+                const newGrams = parseFloat(msg.text.replace(',', '.'));
+                if (isNaN(newGrams) || newGrams <= 0) {
+                    await smartSendMessage(chat_id, '❌ Неверный формат. Пожалуйста, введите вес в граммах (например: 150.5).');
+                    return;
+                }
+
+                // Удаляем состояние, чтобы не мешать следующему шагу
+                delete ingredientEditState[telegram_id];
+
+                const statusMsg = await smartSendMessage(chat_id, '⚖️ Обновляю вес и пересчитываю КБЖУ...');
+
+                // Получаем старые данные из сообщения
+                const originalMessage = await bot.forwardMessage(chat_id, chat_id, message_id);
+                await bot.deleteMessage(chat_id, originalMessage.message_id); // Удаляем пересланное сообщение
+                
+                const recognizedText = originalMessage.text || originalMessage.caption;
+                const ingredientsMatch = recognizedText.match(/Продукты:\s*\n([\s\S]*?)\n\n/);
+                const ingredientsText = ingredientsMatch ? ingredientsMatch[1].replace(/-\s/g, '').trim() : '';
+
+                // Запускаем пересчет
+                const newFoodData = await recognizeFoodFromText(`${newGrams}г ${ingredientsText}`);
+
+                if (newFoodData.success) {
+                    const mealData = newFoodData.data;
+
+                    // Обновляем сообщение с КБЖУ
+                    const newText = `✅ *КБЖУ обновлено для "${mealData.dish_name}" (${newGrams}г)*\n\n` +
+                                    `Продукты:\n- ${mealData.ingredients.join('\n- ')}\n\n` +
+                                    `*Новые КБЖУ:*\n` +
+                                    `- Калории: ${mealData.calories} ккал\n` +
+                                    `- Белки: ${mealData.protein} г\n` +
+                                    `- Жиры: ${mealData.fat} г\n` +
+                                    `- Углеводы: ${mealData.carbs} г\n`;
+
+                    const confirmationId = crypto.randomUUID();
+                    mealConfirmationCache[confirmationId] = { ...mealData, meal_type: 'photo', telegram_id };
+                    
+                    await bot.editMessageText(newText, {
+                        chat_id: chat_id,
+                        message_id: message_id,
+                        parse_mode: 'Markdown',
+                        reply_markup: {
+                            inline_keyboard: [
+                                [{ text: '✅ Сохранить', callback_data: `meal_confirm_${confirmationId}` }],
+                                [{ text: '✏️ Править граммы', callback_data: `edit_grams_${photo_message_id}` }],
+                                [{ text: '🥑 Править продукты', callback_data: `edit_ingredients_${photo_message_id}` }],
+                                [{ text: '❌ Не сохранять', callback_data: `meal_cancel_${confirmationId}` }]
+                            ]
+                        }
+                    });
+                     await bot.deleteMessage(chat_id, statusMsg.message_id); // Удаляем статусное сообщение
+
+                } else {
+                    await bot.editMessageText('❌ Не удалось пересчитать КБЖУ. Попробуйте снова.', {
+                        chat_id: chat_id,
+                        message_id: message_id
+                    });
+                }
+
+            } else if (stage === 'waiting_for_ingredients') {
+                const newIngredients = msg.text.trim();
+                
+                // Удаляем состояние
+                delete ingredientEditState[telegram_id];
+
+                const statusMsg = await smartSendMessage(chat_id, '🥑 Обновляю список продуктов и пересчитываю КБЖУ...');
+
+                const newFoodData = await recognizeFoodFromText(newIngredients);
+
+                 if (newFoodData.success) {
+                    const mealData = newFoodData.data;
+                    const confirmationId = crypto.randomUUID();
+                    mealConfirmationCache[confirmationId] = { ...mealData, meal_type: 'photo', telegram_id };
+
+                    const newText = `✅ *Продукты обновлены для "${mealData.dish_name}"*\n\n` +
+                                    `Продукты:\n- ${mealData.ingredients.join('\n- ')}\n\n` +
+                                    `*Новые КБЖУ:*\n` +
+                                    `- Калории: ${mealData.calories} ккал\n` +
+                                    `- Белки: ${mealData.protein} г\n` +
+                                    `- Жиры: ${mealData.fat} г\n` +
+                                    `- Углеводы: ${mealData.carbs} г\n`;
+
+                    await bot.editMessageText(newText, {
+                        chat_id: chat_id,
+                        message_id: message_id,
+                        parse_mode: 'Markdown',
+                        reply_markup: {
+                           inline_keyboard: [
+                                [{ text: '✅ Сохранить', callback_data: `meal_confirm_${confirmationId}` }],
+                                [{ text: '✏️ Править граммы', callback_data: `edit_grams_${photo_message_id}` }],
+                                [{ text: '🥑 Править продукты', callback_data: `edit_ingredients_${photo_message_id}` }],
+                                [{ text: '❌ Не сохранять', callback_data: `meal_cancel_${confirmationId}` }]
+                            ]
+                        }
+                    });
+                    await bot.deleteMessage(chat_id, statusMsg.message_id);
+                } else {
+                     await bot.editMessageText('❌ Не удалось распознать новые продукты. Попробуйте сформулировать иначе.', {
+                        chat_id: chat_id,
+                        message_id: message_id
+                    });
+                }
+            }
+            return; // Важно, чтобы прервать дальнейшую обработку
+        }
+        // <<< КОНЕЦ БЛОКА ОБРАБОТКИ РЕДАКТИРОВАНИЯ >>>
+
+        if (isWaitingForQuestion) { 
             // Пользователь задает вопрос - обрабатываем его через AI
             delete questionState[telegram_id];
             
@@ -5325,17 +5098,56 @@ const setupBot = (app) => {
         }
 
         if (data === 'subscribe_progress' || data === 'subscribe_ultra') {
-            await bot.answerCallbackQuery(callbackQuery.id);
-            
-            const planName = data === 'subscribe_progress' ? 'ПРОГРЕСС' : 'УЛЬТРА';
-            const price = data === 'subscribe_progress' ? '199₽' : '349₽';
-            
+            // ... существующий код ...
             await bot.editMessageText(`💳 Для оформления подписки "${planName}" (${price}/мес) свяжитесь с администратором:\n\n@your_admin_username\n\nПосле оплаты ваш тариф будет активирован в течение 1 часа.`, {
                 chat_id, message_id: msg.message_id,
                 parse_mode: 'Markdown'
             });
             return;
         }
+
+        // <<< НАЧАЛО БЛОКА ДЛЯ РЕДАКТИРОВАНИЯ ИНГРЕДИЕНТОВ >>>
+        if (data.startsWith('edit_grams_')) {
+            const messageId = parseInt(data.split('_')[2], 10);
+            closeConflictingStates(telegram_id, 'ingredient_edit'); // Очищаем другие состояния
+            ingredientEditState[telegram_id] = {
+                stage: 'waiting_for_grams',
+                message_id: callbackQuery.message.message_id,
+                photo_message_id: messageId
+            };
+            await bot.answerCallbackQuery(callbackQuery.id);
+            await smartSendMessage(chat_id, 'Пожалуйста, пришлите новый вес продукта в граммах (только число).');
+            return;
+        }
+
+        if (data.startsWith('edit_ingredients_')) {
+            const messageId = parseInt(data.split('_')[2], 10);
+            const originalMessage = callbackQuery.message;
+            const recognizedText = originalMessage.text || originalMessage.caption;
+
+            const ingredientsMatch = recognizedText.match(/Продукты:\s*\n([\s\S]*?)\n\n/);
+            const currentIngredients = ingredientsMatch ? ingredientsMatch[1].replace(/-\s/g, '').trim() : '';
+
+            closeConflictingStates(telegram_id, 'ingredient_edit'); // Очищаем другие состояния
+            ingredientEditState[telegram_id] = {
+                stage: 'waiting_for_ingredients',
+                message_id: callbackQuery.message.message_id,
+                photo_message_id: messageId,
+                original_ingredients: currentIngredients
+            };
+
+            let promptText = 'Текущий список продуктов:\n';
+            promptText += `\`${currentIngredients}\`\n\n`;
+            promptText += 'Пришлите новый список продуктов. Вы можете полностью заменить или отредактировать текущий список.';
+
+            await bot.answerCallbackQuery(callbackQuery.id);
+            await smartSendMessage(chat_id, promptText, { parse_mode: 'Markdown' });
+            return;
+        }
+        // <<< КОНЕЦ БЛОКА ДЛЯ РЕДАКТИРОВАНИЯ ИНГРЕДИЕНТОВ >>>
+
+        // --- Challenge Callbacks ---
+// ... существующий код ...
 
         // --- Challenge Callbacks ---
         if (data.startsWith('challenge_')) {
@@ -5736,17 +5548,23 @@ const setupBot = (app) => {
                                         ]
                                     }
                                 });
-                            } else {
-                                // Отправляем план питания как HTML-документ
-                                const currentDate = new Date().toLocaleDateString('ru-RU').replace(/\./g, '_');
-                                let htmlContent, filename;
-                                
-                                htmlContent = generateNutritionPlanHTML(planResult.plan, profile, existingData);
-                                filename = `План_питания_${profile.first_name}_${currentDate}.html`;
-                                
-                                await bot.deleteMessage(chat_id, loadingMessage.message_id);
-                                await sendPlanAsDocument(chat_id, planType, htmlContent, filename);
-                            }
+                            // ... существующий код ...
+                        } else {
+                            // Отправляем план питания как красивое сообщение
+                            await bot.deleteMessage(chat_id, loadingMessage.message_id);
+                            
+                            const formattedPlan = formatNutritionPlanAsMessage(planResult.plan, profile, existingData);
+
+                            await smartSendMessage(chat_id, formattedPlan, {
+                                parse_mode: 'Markdown',
+                                reply_markup: {
+                                    inline_keyboard: [
+                                        [{ text: '🏠 Главное меню', callback_data: 'main_menu' }]
+                                    ]
+                                }
+                            });
+                        }
+// ... существующий код ...
                         } else {
                             await bot.editMessageText(`❌ Произошла ошибка при создании плана: ${planResult.error}`, {
                                 chat_id,
@@ -5829,6 +5647,594 @@ const setupBot = (app) => {
                         }
                     }
                 }
+            }
+            return;
+        }
+        
+        // --- Water Callbacks ---
+        if (action === 'water') {
+            await bot.answerCallbackQuery(callbackQuery.id);
+            
+            if (params[0] === 'add') {
+                const amount = parseInt(params[1]);
+                const result = await addWaterIntake(telegram_id, amount);
+                
+                if (result.success) {
+                    // Обновляем меню с новой статистикой
+                    const waterStats = await getWaterStats(telegram_id, 'today');
+                    const today = new Date().toISOString().split('T')[0];
+                    const todayWater = waterStats.dailyStats[today] || 0;
+                    const percentage = Math.round((todayWater / waterStats.waterNorm) * 100);
+                    const progressBar = createProgressBar(todayWater, waterStats.waterNorm);
+
+                    let waterText = `💧 **Отслеживание воды**\n\n`;
+                    waterText += `✅ Добавлено: ${amount} мл\n`;
+                    waterText += `📊 Сегодня: ${todayWater} / ${waterStats.waterNorm} мл (${percentage}%)\n`;
+                    waterText += `${progressBar}\n\n`;
+                    waterText += `Выберите количество для добавления:`;
+
+                    await bot.editMessageText(waterText, {
+                        chat_id, message_id: msg.message_id,
+                        parse_mode: 'Markdown',
+                        reply_markup: {
+                            inline_keyboard: [
+                                [
+                                    { text: '💧 100 мл', callback_data: 'water_add_100' },
+                                    { text: '💧 200 мл', callback_data: 'water_add_200' }
+                                ],
+                                [
+                                    { text: '💧 250 мл', callback_data: 'water_add_250' },
+                                    { text: '💧 500 мл', callback_data: 'water_add_500' }
+                                ],
+                                [
+                                    { text: '📊 Статистика воды', callback_data: 'water_stats' },
+                                    { text: '✏️ Свое количество', callback_data: 'water_custom' }
+                                ]
+                            ]
+                        }
+                    });
+                } else {
+                    await bot.editMessageText(`❌ Ошибка: ${result.error}`, {
+                        chat_id, message_id: msg.message_id
+                    });
+                }
+            } else if (params[0] === 'stats') {
+                // Показываем статистику воды
+                bot.sendMessage(chat_id, 'За какой период показать статистику воды?', {
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: 'За сегодня', callback_data: 'water_period_today' }],
+                            [{ text: 'За неделю', callback_data: 'water_period_week' }],
+                            [{ text: 'За месяц', callback_data: 'water_period_month' }]
+                        ]
+                    }
+                });
+            } else if (params[0] === 'period') {
+                const period = params[1];
+                const waterStats = await getWaterStats(telegram_id, period);
+                
+                if (waterStats.success) {
+                    let periodText = '';
+                    if (period === 'today') periodText = 'сегодня';
+                    else if (period === 'week') periodText = 'за неделю';
+                    else if (period === 'month') periodText = 'за месяц';
+
+                    let statsText = `💧 **Статистика воды ${periodText}**\n\n`;
+                    
+                    if (waterStats.recordsCount === 0) {
+                        statsText += `За ${periodText} вы еще не добавляли записи о воде.`;
+                    } else {
+                        if (period === 'today') {
+                            const today = new Date().toISOString().split('T')[0];
+                            const todayWater = waterStats.dailyStats[today] || 0;
+                            const percentage = Math.round((todayWater / waterStats.waterNorm) * 100);
+                            const progressBar = createProgressBar(todayWater, waterStats.waterNorm);
+
+                            statsText += `📊 Выпито: ${todayWater} / ${waterStats.waterNorm} мл (${percentage}%)\n`;
+                            statsText += `${progressBar}\n\n`;
+                            
+                            if (percentage >= 100) {
+                                statsText += `🎉 Отлично! Вы выполнили дневную норму воды!`;
+                            } else {
+                                const remaining = waterStats.waterNorm - todayWater;
+                                statsText += `💡 Осталось выпить: ${remaining} мл`;
+                            }
+                        } else {
+                            const daysWithData = Object.keys(waterStats.dailyStats).length;
+                            const avgDaily = Math.round(waterStats.totalWater / Math.max(daysWithData, 1));
+                            
+                            statsText += `📈 Всего выпито: ${waterStats.totalWater} мл\n`;
+                            statsText += `📅 Дней с записями: ${daysWithData}\n`;
+                            statsText += `📊 В среднем в день: ${avgDaily} мл\n`;
+                            statsText += `🎯 Дневная норма: ${waterStats.waterNorm} мл\n\n`;
+                            
+                            const avgPercentage = Math.round((avgDaily / waterStats.waterNorm) * 100);
+                            statsText += `💯 Выполнение нормы: ${avgPercentage}%`;
+                        }
+                    }
+
+                    await bot.editMessageText(statsText, {
+                        chat_id, message_id: msg.message_id,
+                        parse_mode: 'Markdown'
+                    });
+                } else {
+                    await bot.editMessageText(`❌ Ошибка: ${waterStats.error}`, {
+                        chat_id, message_id: msg.message_id
+                    });
+                }
+            } else if (params[0] === 'custom') {
+                // Включаем режим ожидания ввода количества воды
+                // Умная очистка перед вводом воды (оставляем только водные операции)
+                closeConflictingStates(telegram_id, 'water_tracking');
+                waterInputState[telegram_id] = { waiting: true };
+                await bot.editMessageText('Напишите количество воды в миллилитрах (например, 300):', {
+                    chat_id, message_id: msg.message_id,
+                    reply_markup: null
+                });
+            }
+            return;
+        }
+
+        // --- Registration Callbacks ---
+        if (action === 'register' && registrationState[telegram_id]) {
+            const state = registrationState[telegram_id];
+            const value = params[params.length - 1];
+            await bot.answerCallbackQuery(callbackQuery.id);
+
+            if (state.step === 'ask_gender' && params[0] === 'gender') {
+                state.data.gender = value;
+                state.step = 'ask_age';
+                await bot.editMessageText('Принято. Теперь введи свой возраст (полных лет):', {
+                    chat_id: chat_id, message_id: msg.message_id,
+                });
+                return;
+            }
+            
+            if (state.step === 'ask_goal' && params[0] === 'goal') {
+                const goalMapping = { 'lose': 'lose_weight', 'maintain': 'maintain_weight', 'gain': 'gain_mass' };
+                state.data.goal = goalMapping[value];
+                
+                try {
+                    const { data: newProfile, error } = await supabase.from('profiles').insert([{
+                        telegram_id: state.data.telegram_id,
+                        username: state.data.username,
+                        first_name: state.data.first_name,
+                        last_name: state.data.last_name,
+                        chat_id: state.data.chat_id,
+                        gender: state.data.gender,
+                        age: state.data.age,
+                        height_cm: state.data.height_cm,
+                        weight_kg: state.data.weight_kg,
+                        goal: state.data.goal
+                    }]).select().single();
+
+                    if (error) throw error;
+                    delete registrationState[telegram_id];
+                    await calculateAndSaveNorms(newProfile);
+
+                    await bot.editMessageText(`✅ Отлично! Твой профиль сохранён.`, {
+                        chat_id: chat_id, message_id: msg.message_id,
+                    });
+                    
+                    showMainMenu(chat_id, `Теперь ты можешь начать отслеживать калории. Чем займёмся?`);
+                } catch (dbError) {
+                    console.error('Error saving user profile:', dbError.message);
+                    await bot.editMessageText('Не удалось сохранить твой профиль. Что-то пошло не так. Попробуй /start еще раз.', {
+                        chat_id: chat_id, message_id: msg.message_id,
+                    });
+                }
+                return;
+            }
+        }
+
+        // --- Meal Confirmation Callbacks ---
+        if (action === 'meal') {
+            const confirmationAction = params[0]; // 'confirm' or 'cancel'
+            const confirmationId = params[1];
+            await bot.answerCallbackQuery(callbackQuery.id);
+
+            const mealData = mealConfirmationCache[confirmationId];
+
+            if (!mealData) {
+                await bot.editMessageText('🤔 Похоже, эти кнопки устарели. Пожалуйста, попробуйте добавить еду заново.', {
+                    chat_id, message_id: msg.message_id, reply_markup: null
+                });
+                return;
+            }
+
+            delete mealConfirmationCache[confirmationId];
+
+            if (confirmationAction === 'confirm') {
+                try {
+                    const { dish_name, calories, protein, fat, carbs, weight_g, meal_type, telegram_id: meal_telegram_id } = mealData;
+                    const { data: profile, error: profileError } = await supabase
+                        .from('profiles').select('id').eq('telegram_id', meal_telegram_id).single();
+
+                    if (profileError || !profile) throw new Error(`User profile not found for meal save. Telegram ID: ${meal_telegram_id}`);
+
+                    const mealToInsert = {
+                        user_id: profile.id,
+                        description: dish_name,
+                        calories: parseInt(calories),
+                        protein: parseFloat(protein),
+                        fat: parseFloat(fat),
+                        carbs: parseFloat(carbs),
+                        weight_g: parseInt(weight_g),
+                        meal_type: meal_type,
+                        eaten_at: new Date().toISOString()
+                    };
+
+                    console.log(`Сохраняем еду для пользователя ${meal_telegram_id}:`, mealToInsert);
+
+                    const { error: mealError } = await supabase.from('meals').insert([mealToInsert]);
+                    if (mealError) throw mealError;
+
+                    console.log(`✅ Еда успешно сохранена для пользователя ${meal_telegram_id}`);
+                    
+                    // 📊 УЧЕТ ИСПОЛЬЗОВАНИЯ ЛИМИТОВ
+                    if (meal_type === 'manual') {
+                        await incrementUsage(meal_telegram_id, 'manual_entries');
+                        console.log(`📊 Увеличен счетчик ручного ввода для пользователя ${meal_telegram_id}`);
+                    } else if (meal_type === 'photo') {
+                        // Уже учтено в обработке фото
+                        console.log(`📊 Фото уже учтено для пользователя ${meal_telegram_id}`);
+                    }
+
+                    await bot.editMessageText(`✅ Сохранено: ${dish_name} (${calories} ккал).`, {
+                        chat_id, message_id: msg.message_id, reply_markup: null
+                    });
+                } catch(dbError) {
+                    console.error('Error saving meal:', dbError.message);
+                    await bot.editMessageText('Не удалось сохранить приём пищи. Пожалуйста, попробуйте снова.', {
+                        chat_id, message_id: msg.message_id
+                    });
+                }
+            } else { // 'cancel'
+                await bot.editMessageText('Действие отменено.', {
+                    chat_id, message_id: msg.message_id, reply_markup: null
+                });
+            }
+            return;
+        }
+
+        // --- Meal Editing Callbacks ---
+        if (action === 'meal_edit_grams') {
+            const confirmationId = params[0];
+            await bot.answerCallbackQuery(callbackQuery.id);
+
+            const mealData = mealConfirmationCache[confirmationId];
+            if (!mealData) {
+                await bot.editMessageText('🤔 Эта сессия редактирования устарела. Пожалуйста, попробуйте добавить еду заново.', {
+                    chat_id, message_id: msg.message_id, reply_markup: null
+                });
+                return;
+            }
+
+            // Store original values if not already stored
+            if (!mealData.original_calories) {
+                mealData.original_calories = mealData.calories;
+                mealData.original_protein = mealData.protein;
+                mealData.original_fat = mealData.fat;
+                mealData.original_carbs = mealData.carbs;
+                mealData.original_weight = mealData.weight_g;
+            }
+
+            const responseText = `*${mealData.dish_name}* (Текущий вес: ${mealData.weight_g} г)\n\n⚖️ *Выберите, на сколько изменить вес:*`;
+            
+            await bot.editMessageText(responseText, {
+                chat_id, message_id: msg.message_id, parse_mode: 'Markdown',
+                reply_markup: {
+                    inline_keyboard: [
+                        [
+                            { text: '-100 г', callback_data: `meal_update_grams_${confirmationId}_-100` },
+                            { text: '-50 г', callback_data: `meal_update_grams_${confirmationId}_-50` },
+                            { text: '+50 г', callback_data: `meal_update_grams_${confirmationId}_50` },
+                            { text: '+100 г', callback_data: `meal_update_grams_${confirmationId}_100` }
+                        ],
+                        [
+                             { text: '✅ Готово', callback_data: `meal_confirm_${confirmationId}` }
+                        ]
+                    ]
+                }
+            });
+            return;
+        }
+
+        if (action === 'meal_update_grams') {
+            const confirmationId = params[0];
+            const weightChange = parseInt(params[1]);
+            
+            const mealData = mealConfirmationCache[confirmationId];
+            if (!mealData) {
+                await bot.answerCallbackQuery(callbackQuery.id, { text: 'Сессия устарела. Попробуйте заново.' });
+                return;
+            }
+
+            const originalWeight = mealData.original_weight || mealData.weight_g;
+            const newWeight = Math.max(10, mealData.weight_g + weightChange); // not less than 10g
+
+            // Recalculate based on original values for accuracy
+            mealData.calories = Math.round((mealData.calories / mealData.weight_g) * newWeight);
+            mealData.protein = Math.round((mealData.protein / mealData.weight_g) * newWeight);
+            mealData.fat = Math.round((mealData.fat / mealData.weight_g) * newWeight);
+            mealData.carbs = Math.round((mealData.carbs / mealData.weight_g) * newWeight);
+            mealData.weight_g = newWeight;
+            
+            // Store original weight if not already stored, for correct multiple recalculation
+            if (!mealData.original_weight) {
+                mealData.original_weight = originalWeight;
+            }
+
+            await bot.answerCallbackQuery(callbackQuery.id, { text: `Новый вес: ${newWeight} г` });
+
+            const ingredientsString = mealData.ingredients.join(', ');
+            const responseText = `*${mealData.dish_name}* (Новый вес: ${mealData.weight_g} г)\n\n*Ингредиенты:* ${ingredientsString}\n*КБЖУ:* \n- Калории: ${mealData.calories} ккал\n- Белки: ${mealData.protein} г\n- Жиры: ${mealData.fat} г\n- Углеводы: ${mealData.carbs} г\n\n⚖️ *Продолжайте изменять вес или нажмите "Готово".*`;
+
+            await bot.editMessageText(responseText, {
+                chat_id, message_id: msg.message_id, parse_mode: 'Markdown',
+                reply_markup: {
+                     inline_keyboard: [
+                        [
+                            { text: '-100 г', callback_data: `meal_update_grams_${confirmationId}_-100` },
+                            { text: '-50 г', callback_data: `meal_update_grams_${confirmationId}_-50` },
+                            { text: '+50 г', callback_data: `meal_update_grams_${confirmationId}_50` },
+                            { text: '+100 г', callback_data: `meal_update_grams_${confirmationId}_100` }
+                        ],
+                        [
+                            { text: '✅ Готово', callback_data: `meal_confirm_${confirmationId}` }
+                        ]
+                    ]
+                }
+            });
+            return;
+        }
+
+        if (action === 'meal_edit_ingredients') {
+            const confirmationId = params[0];
+            await bot.answerCallbackQuery(callbackQuery.id);
+
+            const mealData = mealConfirmationCache[confirmationId];
+            if (!mealData) {
+                await bot.editMessageText('🤔 Эта сессия редактирования устарела. Пожалуйста, попробуйте добавить еду заново.', {
+                    chat_id, message_id: msg.message_id, reply_markup: null
+                });
+                return;
+            }
+
+            // Set state for ingredient editing
+            ingredientEditState[telegram_id] = { 
+                waiting: true, 
+                confirmationId: confirmationId,
+                message_id: msg.message_id
+            };
+
+            const currentIngredients = mealData.ingredients.join(', ');
+            await bot.editMessageText(`Текущие ингредиенты: *${currentIngredients}*.\n\n✏️ Введите новый список ингредиентов через запятую.\n\n*Пример: куриная грудка, рис, брокколи, оливковое масло*`, {
+                chat_id,
+                message_id: msg.message_id,
+                parse_mode: 'Markdown'
+            });
+            return;
+        }
+
+        // --- Stats Callbacks ---
+        if (action === 'stats') {
+            const period = params[0];
+            await bot.answerCallbackQuery(callbackQuery.id);
+
+            // 🔒 ПРОВЕРКА ДОСТУПА К СТАТИСТИКЕ ПО ТАРИФАМ
+            const subscription = await getUserSubscription(telegram_id);
+            const tier = subscription.tier;
+            
+            // Проверяем разрешение на просмотр статистики за определенный период
+            if (period === 'week' && tier === 'free') {
+                let upgradeText = `🚫 **Недельная статистика доступна только с тарифами PROMO и выше!**\n\n`;
+                upgradeText += `📊 **Что вы получите:**\n`;
+                upgradeText += `• Статистика за неделю и месяц\n`;
+                upgradeText += `• Детальная аналитика прогресса\n`;
+                upgradeText += `• Графики и тренды\n\n`;
+                
+                if (!subscription.promo_expires_at) {
+                    upgradeText += `🎁 **Попробуйте промо-период бесплатно!**`;
+                    
+                    await bot.editMessageText(upgradeText, {
+                        chat_id, message_id: msg.message_id,
+                        parse_mode: 'Markdown',
+                        reply_markup: {
+                            inline_keyboard: [
+                                [{ text: '🎁 Активировать промо', callback_data: 'activate_promo' }],
+                                [{ text: '📋 Посмотреть тарифы', callback_data: 'subscription_plans' }]
+                            ]
+                        }
+                    });
+                } else {
+                    upgradeText += `Выберите подходящий тариф для продолжения! 🚀`;
+                    await bot.editMessageText(upgradeText, {
+                        chat_id, message_id: msg.message_id,
+                        parse_mode: 'Markdown',
+                        reply_markup: {
+                            inline_keyboard: [
+                                [{ text: '📋 Посмотреть тарифы', callback_data: 'subscription_plans' }]
+                            ]
+                        }
+                    });
+                }
+                return;
+            }
+            
+            if (period === 'month' && (tier === 'free' || tier === 'promo')) {
+                let upgradeText = `🚫 **Месячная статистика доступна только с тарифами PROGRESS и выше!**\n\n`;
+                upgradeText += `📊 **Что вы получите:**\n`;
+                upgradeText += `• Статистика за месяц и год\n`;
+                upgradeText += `• Безлимитный анализ еды\n`;
+                upgradeText += `• Планы тренировок и питания\n`;
+                upgradeText += `• Ежедневные отчеты\n\n`;
+                upgradeText += `Выберите подходящий тариф для продолжения! 🚀`;
+                
+                await bot.editMessageText(upgradeText, {
+                    chat_id, message_id: msg.message_id,
+                    parse_mode: 'Markdown',
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: '📋 Посмотреть тарифы', callback_data: 'subscription_plans' }]
+                        ]
+                    }
+                });
+                return;
+            }
+
+            try {
+                const { data: profile, error: profileError } = await supabase
+                    .from('profiles')
+                    .select('id, first_name, weight_kg, daily_calories, daily_protein, daily_fat, daily_carbs')
+                    .eq('telegram_id', telegram_id)
+                    .single();
+
+                if (profileError || !profile) {
+                    await bot.editMessageText('Не удалось найти ваш профиль. Пожалуйста, попробуйте /start, чтобы всё синхронизировать.', {
+                        chat_id, message_id: msg.message_id
+                    });
+                    return;
+                }
+                
+                let periodText = '';
+                if (period === 'today') periodText = 'сегодня';
+                else if (period === 'week') periodText = 'эту неделю';
+                else if (period === 'month') periodText = 'этот месяц';
+
+                const { data: allMeals, error: mealsError } = await supabase
+                    .from('meals')
+                    .select('calories, protein, fat, carbs, eaten_at, description')
+                    .eq('user_id', profile.id)
+                    .order('eaten_at', { ascending: false });
+
+                if (mealsError) throw mealsError;
+
+                // Фильтрация по периоду
+                let meals = allMeals || [];
+                if (period === 'today' && meals.length > 0) {
+                    const now = new Date();
+                    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+                    const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+                    
+                    meals = allMeals.filter(meal => {
+                        const mealDate = new Date(meal.eaten_at);
+                        return mealDate >= todayStart && mealDate <= todayEnd;
+                    });
+                } else if (period === 'week' && meals.length > 0) {
+                    const now = new Date();
+                    const weekStart = new Date(now);
+                    weekStart.setDate(now.getDate() - 7);
+                    
+                    meals = allMeals.filter(meal => new Date(meal.eaten_at) >= weekStart);
+                } else if (period === 'month' && meals.length > 0) {
+                    const now = new Date();
+                    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+                    
+                    meals = allMeals.filter(meal => new Date(meal.eaten_at) >= monthStart);
+                }
+
+                let statsText;
+                if (!meals || meals.length === 0) {
+                    statsText = `За ${periodText}, ${profile.first_name}, у тебя еще не было записей о приемах пищи.`;
+                } else {
+                    const totals = meals.reduce((acc, meal) => {
+                        acc.calories += meal.calories || 0;
+                        acc.protein += meal.protein || 0;
+                        acc.fat += meal.fat || 0;
+                        acc.carbs += meal.carbs || 0;
+                        return acc;
+                    }, { calories: 0, protein: 0, fat: 0, carbs: 0 });
+                    
+                    const formatLine = (consumed, norm) => norm ? `${consumed.toFixed(0)} / ${norm} ` : `${consumed.toFixed(0)} `;
+
+                    const { daily_calories, daily_protein, daily_fat, daily_carbs } = profile;
+                    
+                    // Рассчитываем данные для прогресс-баров долгосрочного трекинга
+                    let dailyAverageText = '';
+                    let totalCaloriesNormText = '';
+                    let totalWaterNormText = '';
+                    
+                    if (period !== 'today') {
+                         // Рассчитываем количество дней
+                         let daysInPeriod = 1;
+                         if (period === 'week') {
+                             daysInPeriod = 7;
+                         } else if (period === 'month') {
+                             const now = new Date();
+                             daysInPeriod = now.getDate(); // дни с начала месяца
+                         }
+                         
+                         const avgCalories = totals.calories / daysInPeriod;
+                         dailyAverageText = `📈 Среднесуточно: *${avgCalories.toFixed(0)} ккал/день*\n\n`;
+                         
+                         // Общий трекер калорий за период
+                         const totalCaloriesNorm = daily_calories * daysInPeriod;
+                         const caloriesPercentage = Math.round((totals.calories / totalCaloriesNorm) * 100);
+                         totalCaloriesNormText = `\n🎯 **Общий прогресс калорий за ${periodText}:**\n` +
+                                               `${totals.calories.toFixed(0)} / ${totalCaloriesNorm} ккал (${caloriesPercentage}%)\n` +
+                                               `${createProgressBar(totals.calories, totalCaloriesNorm)}\n`;
+                    }
+
+                    // Получаем статистику воды
+                    const waterStats = await getWaterStats(telegram_id, period);
+                    let waterText = '';
+                    
+                    if (waterStats.success) {
+                        if (period === 'today') {
+                            const today = new Date().toISOString().split('T')[0];
+                            const todayWater = waterStats.dailyStats[today] || 0;
+                            const waterPercentage = Math.round((todayWater / waterStats.waterNorm) * 100);
+                            waterText = `\n\n💧 Вода: *${todayWater} / ${waterStats.waterNorm} мл (${waterPercentage}%)*\n` +
+                                       `${createProgressBar(todayWater, waterStats.waterNorm)}`;
+                        } else {
+                            const daysWithData = Object.keys(waterStats.dailyStats).length;
+                            if (daysWithData > 0) {
+                                const avgDaily = Math.round(waterStats.totalWater / Math.max(daysWithData, 1));
+                                const avgPercentage = Math.round((avgDaily / waterStats.waterNorm) * 100);
+                                
+                                // Общий трекер воды за период
+                                let daysInPeriod = 1;
+                                if (period === 'week') {
+                                    daysInPeriod = 7;
+                                } else if (period === 'month') {
+                                    const now = new Date();
+                                    daysInPeriod = now.getDate();
+                                }
+                                const totalWaterNorm = waterStats.waterNorm * daysInPeriod;
+                                const totalWaterPercentage = Math.round((waterStats.totalWater / totalWaterNorm) * 100);
+                                
+                                totalWaterNormText = `\n🎯 **Общий прогресс воды за ${periodText}:**\n` +
+                                                   `${waterStats.totalWater} / ${totalWaterNorm} мл (${totalWaterPercentage}%)\n` +
+                                                   `${createProgressBar(waterStats.totalWater, totalWaterNorm)}\n`;
+                                
+                                waterText = `\n\n💧 Вода среднесуточно: *${avgDaily} мл/день (${avgPercentage}% от нормы)*`;
+                            }
+                        }
+                    }
+
+                    statsText = `*Статистика за ${periodText}, ${profile.first_name}:*\n\n` +
+                                `🔥 Калории: *${formatLine(totals.calories, daily_calories)}ккал*\n` +
+                                (period === 'today' ? `${createProgressBar(totals.calories, daily_calories)}\n\n` : '') +
+                                (period === 'today' ? '' : dailyAverageText) +
+                                totalCaloriesNormText +
+                                `\n*Общее количество БЖУ:*\n` +
+                                `🥩 Белки: ${formatLine(totals.protein, daily_protein)}г\n` +
+                                `🥑 Жиры: ${formatLine(totals.fat, daily_fat)}г\n` +
+                                `🍞 Углеводы: ${formatLine(totals.carbs, daily_carbs)}г` +
+                                waterText +
+                                totalWaterNormText;
+                }
+                
+                await bot.editMessageText(statsText, {
+                    chat_id, message_id: msg.message_id, parse_mode: 'Markdown', reply_markup: null
+                });
+
+            } catch (dbError) {
+                console.error('Error fetching stats:', dbError.message);
+                await bot.editMessageText('Произошла ошибка при получении статистики. Попробуйте позже.', {
+                    chat_id, message_id: msg.message_id
+                });
             }
             return;
         }
