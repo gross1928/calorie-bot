@@ -1864,7 +1864,7 @@ const showProfileMenu = async (chat_id, telegram_id) => {
                         { text: '👤 Пол', callback_data: 'profile_edit_gender' }
                     ],
                     [
-                        { text: '🌍 Часовой пояс', callback_data: 'profile_edit_timezone' }
+                        // { text: '🌍 Часовой пояс', callback_data: 'profile_edit_timezone' } // Временно отключено
                     ]
                 ]
             }
@@ -4606,18 +4606,17 @@ const setupBot = (app) => {
                     }
                     const weight = parseFloat(msg.text.replace(',', '.'));
                     state.data.weight_kg = weight;
-                    state.step = 'ask_timezone';
+                    state.step = 'ask_goal'; // Временно пропускаем timezone до применения миграции
                     logEvent('info', 'Registration weight validated', { userId: telegram_id, weight });
-                    bot.sendMessage(chat_id, '🌍 В каком часовом поясе вы находитесь? Это поможет отправлять уведомления в удобное время.', {
+                    bot.sendMessage(chat_id, '🎯 Какая у тебя основная цель?', {
                         reply_markup: {
                             inline_keyboard: [
-                                [{ text: '🇷🇺 Москва (UTC+3)', callback_data: 'register_timezone_Europe/Moscow' }],
-                                [{ text: '🇷🇺 Екатеринбург (UTC+5)', callback_data: 'register_timezone_Asia/Yekaterinburg' }],
-                                [{ text: '🇷🇺 Новосибирск (UTC+7)', callback_data: 'register_timezone_Asia/Novosibirsk' }],
-                                [{ text: '🇷🇺 Владивосток (UTC+10)', callback_data: 'register_timezone_Asia/Vladivostok' }],
-                                [{ text: '🇺🇦 Киев (UTC+2)', callback_data: 'register_timezone_Europe/Kiev' }],
-                                [{ text: '🇰🇿 Алматы (UTC+6)', callback_data: 'register_timezone_Asia/Almaty' }],
-                                [{ text: '🌍 Другой', callback_data: 'register_timezone_other' }]
+                                [{ text: '📉 Снижение веса', callback_data: 'register_goal_weight_loss' }],
+                                [{ text: '📈 Набор веса', callback_data: 'register_goal_weight_gain' }],
+                                [{ text: '⚖️ Поддержание веса', callback_data: 'register_goal_maintenance' }],
+                                [{ text: '💪 Набор мышечной массы', callback_data: 'register_goal_muscle_gain' }],
+                                [{ text: '🏃‍♂️ Улучшение выносливости', callback_data: 'register_goal_endurance' }],
+                                [{ text: '🏋️‍♀️ Увеличение силы', callback_data: 'register_goal_strength' }]
                             ]
                         }
                     });
@@ -5858,7 +5857,7 @@ const setupBot = (app) => {
                         height_cm: state.data.height_cm,
                         weight_kg: state.data.weight_kg,
                         goal: state.data.goal,
-                        timezone: state.data.timezone || 'Europe/Moscow'
+                        // timezone: state.data.timezone || 'Europe/Moscow' // Временно отключено до применения миграции
                     }]).select().single();
 
                     if (error) throw error;
