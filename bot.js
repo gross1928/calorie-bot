@@ -1184,7 +1184,6 @@ const challengeStepsState = {};
 const workoutInjuryState = {};
 const questionState = {};
 const medicalAnalysisState = {};
-const ingredientEditState = {};
 const callbackDebounce = {};
 
 // Очистка debounce данных каждую минуту
@@ -1196,42 +1195,6 @@ setInterval(() => {
         }
     }
 }, 60000);
-
-// Функция для красивого форматирования планов тренировок
-const formatWorkoutPlan = (text) => {
-    let formatted = text;
-    
-    // Заменяем ** на *
-    formatted = formatted.replace(/\*\*(.*?)\*\*/g, '*$1*');
-    
-    // Добавляем дополнительные emoji для красоты
-    formatted = formatted.replace(/🏋️/g, '🏋️‍♂️');
-    formatted = formatted.replace(/💪/g, '💪');
-    formatted = formatted.replace(/📊/g, '📊');
-    formatted = formatted.replace(/📅/g, '📅');
-    formatted = formatted.replace(/💡/g, '💡');
-    formatted = formatted.replace(/⚠️/g, '⚠️');
-    formatted = formatted.replace(/🎯/g, '🎯');
-    
-    // Улучшаем форматирование списков
-    formatted = formatted.replace(/^- /gm, '• ');
-    formatted = formatted.replace(/^(\d+)\. /gm, '$1️⃣ ');
-    
-    // Выделяем числа (подходы, повторения, веса)
-    formatted = formatted.replace(/(\d+)\s*x\s*(\d+)/g, '*$1 × $2*');
-    formatted = formatted.replace(/(\d+)\s*(кг|kg)/gi, '*$1 $2*');
-    formatted = formatted.replace(/(\d+)\s*(сек|мин|минут)/gi, '*$1 $2*');
-    
-    // Выделяем дни недели
-    formatted = formatted.replace(/(Понедельник|Вторник|Среда|Четверг|Пятница|Суббота|Воскресенье)/gi, '*$1*');
-    formatted = formatted.replace(/День\s*(\d+)/gi, '*День $1*');
-    
-    // Убираем лишние переносы и пробелы
-    formatted = formatted.replace(/\n\n+/g, '\n\n');
-    formatted = formatted.replace(/^\s+|\s+$/g, '');
-    
-    return formatted;
-};
 
 
 const calculateAndSaveNorms = async (profile) => {
@@ -1899,6 +1862,9 @@ const showProfileMenu = async (chat_id, telegram_id) => {
                     [
                         { text: '🎯 Цель', callback_data: 'profile_edit_goal' },
                         { text: '👤 Пол', callback_data: 'profile_edit_gender' }
+                    ],
+                    [
+                        { text: '🌍 Часовой пояс', callback_data: 'profile_edit_timezone' }
                     ]
                 ]
             }
@@ -3390,15 +3356,59 @@ const setupBot = (app) => {
         const telegram_id = msg.from.id;
         const chat_id = msg.chat.id;
 
-        // Можете поменять этот ID на ваш telegram_id для тестирования
-        const adminId = '123456789'; // Замените на ваш telegram_id
-        
-        if (telegram_id.toString() === adminId) {
-            bot.sendMessage(chat_id, '📊 Запускаю тестовую отправку ежедневных отчетов...');
-            await sendDailyReports();
-            bot.sendMessage(chat_id, '✅ Тестовая отправка завершена! Проверьте логи.');
-        } else {
+        // Проверяем права администратора
+        if (!ADMIN_IDS.includes(telegram_id)) {
             bot.sendMessage(chat_id, '❌ У вас нет прав для выполнения этой команды.');
+            return;
+        }
+        
+        bot.sendMessage(chat_id, '📊 Запускаю тестовую отправку ежедневных отчетов...');
+        await sendDailyReports();
+        bot.sendMessage(chat_id, '✅ Тестовая отправка завершена! Проверьте логи.');
+    });
+
+    // Команда для тестирования еженедельных VIP отчетов (только для администратора)
+    bot.onText(/\/test_weekly_vip_report/, async (msg) => {
+        const telegram_id = msg.from.id;
+        const chat_id = msg.chat.id;
+
+        // Проверяем права администратора
+        if (!ADMIN_IDS.includes(telegram_id)) {
+            bot.sendMessage(chat_id, '❌ У вас нет прав для выполнения этой команды.');
+            return;
+        }
+        
+        bot.sendMessage(chat_id, '📈 Запускаю тестовую отправку еженедельных VIP отчетов...');
+        await sendWeeklyReports();
+        bot.sendMessage(chat_id, '✅ Тестовая отправка VIP отчетов завершена! Проверьте логи.');
+    });
+
+    // Команда для получения своего еженедельного VIP отчета
+    bot.onText(/\/my_weekly_report/, async (msg) => {
+        const telegram_id = msg.from.id;
+        const chat_id = msg.chat.id;
+        
+        // Проверяем, что у пользователя VIP статус
+        const subscription = await getUserSubscription(telegram_id);
+        if (subscription.tier !== 'maximum') {
+            bot.sendMessage(chat_id, '💎 Еженедельные детальные отчеты доступны только для VIP (MAXIMUM) пользователей!\n\n🚀 Обновите тариф для получения персональной аналитики прогресса.', {
+                parse_mode: 'Markdown',
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: '📋 Посмотреть тарифы', callback_data: 'subscription_plans' }]
+                    ]
+                }
+            });
+            return;
+        }
+        
+        bot.sendMessage(chat_id, '📊 Генерирую ваш персональный еженедельный VIP отчет...');
+        
+        const report = await generateWeeklyReport(telegram_id);
+        if (report) {
+            bot.sendMessage(chat_id, report, { parse_mode: 'Markdown' });
+        } else {
+            bot.sendMessage(chat_id, '❌ Не удалось сгенерировать отчет. Возможно, у вас недостаточно данных за прошедшую неделю.');
         }
     });
 
@@ -4106,11 +4116,7 @@ const setupBot = (app) => {
         const isWaitingForSteps = challengeStepsState[telegram_id]?.waiting;
         const isEditingProfile = profileEditState[telegram_id]?.field;
         const isWaitingForInjuryDetails = workoutInjuryState[telegram_id]?.waiting;
-
-        // ... существующий код ...
-        const isEditingProfile = profileEditState[telegram_id]?.field;
-        const isWaitingForInjuryDetails = workoutInjuryState[telegram_id]?.waiting;
-        const ingredientEdit = ingredientEditState[telegram_id]; // <<< ДОБАВЬТЕ ЭТУ СТРОКУ
+        const ingredientEdit = ingredientEditState[telegram_id]; 
 
         // <<< НАЧАЛО БЛОКА ОБРАБОТКИ РЕДАКТИРОВАНИЯ >>>
         if (ingredientEdit) {
@@ -4600,17 +4606,24 @@ const setupBot = (app) => {
                     }
                     const weight = parseFloat(msg.text.replace(',', '.'));
                     state.data.weight_kg = weight;
-                    state.step = 'ask_goal';
+                    state.step = 'ask_timezone';
                     logEvent('info', 'Registration weight validated', { userId: telegram_id, weight });
-                    bot.sendMessage(chat_id, 'И последнее: какая у тебя цель?', {
+                    bot.sendMessage(chat_id, '🌍 В каком часовом поясе вы находитесь? Это поможет отправлять уведомления в удобное время.', {
                         reply_markup: {
                             inline_keyboard: [
-                                [{ text: '📉 Похудение', callback_data: 'register_goal_lose' }],
-                                [{ text: '⚖️ Поддержание', callback_data: 'register_goal_maintain' }],
-                                [{ text: '📈 Набор массы', callback_data: 'register_goal_gain' }]
+                                [{ text: '🇷🇺 Москва (UTC+3)', callback_data: 'register_timezone_Europe/Moscow' }],
+                                [{ text: '🇷🇺 Екатеринбург (UTC+5)', callback_data: 'register_timezone_Asia/Yekaterinburg' }],
+                                [{ text: '🇷🇺 Новосибирск (UTC+7)', callback_data: 'register_timezone_Asia/Novosibirsk' }],
+                                [{ text: '🇷🇺 Владивосток (UTC+10)', callback_data: 'register_timezone_Asia/Vladivostok' }],
+                                [{ text: '🇺🇦 Киев (UTC+2)', callback_data: 'register_timezone_Europe/Kiev' }],
+                                [{ text: '🇰🇿 Алматы (UTC+6)', callback_data: 'register_timezone_Asia/Almaty' }],
+                                [{ text: '🌍 Другой', callback_data: 'register_timezone_other' }]
                             ]
                         }
                     });
+                    break;
+                case 'ask_timezone':
+                    // Этот case обрабатывается через callback, но добавляем для полноты
                     break;
             }
         }
@@ -5790,6 +5803,45 @@ const setupBot = (app) => {
                 return;
             }
             
+            if (state.step === 'ask_timezone' && params[0] === 'timezone') {
+                if (value === 'other') {
+                    // Для "Другой" пока оставляем московское время, можно потом добавить ручной ввод
+                    state.data.timezone = 'Europe/Moscow';
+                    await bot.editMessageText('Выбран московский часовой пояс по умолчанию.\n\nИ последнее: какая у тебя цель?', {
+                        chat_id: chat_id, message_id: msg.message_id,
+                        reply_markup: {
+                            inline_keyboard: [
+                                [{ text: '📉 Похудение', callback_data: 'register_goal_lose' }],
+                                [{ text: '⚖️ Поддержание', callback_data: 'register_goal_maintain' }],
+                                [{ text: '📈 Набор массы', callback_data: 'register_goal_gain' }]
+                            ]
+                        }
+                    });
+                } else {
+                    state.data.timezone = value;
+                    const timezoneNames = {
+                        'Europe/Moscow': 'Москва (UTC+3)',
+                        'Asia/Yekaterinburg': 'Екатеринбург (UTC+5)',
+                        'Asia/Novosibirsk': 'Новосибирск (UTC+7)',
+                        'Asia/Vladivostok': 'Владивосток (UTC+10)',
+                        'Europe/Kiev': 'Киев (UTC+2)',
+                        'Asia/Almaty': 'Алматы (UTC+6)'
+                    };
+                    await bot.editMessageText(`Отлично! Выбран часовой пояс: ${timezoneNames[value] || value}\n\nИ последнее: какая у тебя цель?`, {
+                        chat_id: chat_id, message_id: msg.message_id,
+                        reply_markup: {
+                            inline_keyboard: [
+                                [{ text: '📉 Похудение', callback_data: 'register_goal_lose' }],
+                                [{ text: '⚖️ Поддержание', callback_data: 'register_goal_maintain' }],
+                                [{ text: '📈 Набор массы', callback_data: 'register_goal_gain' }]
+                            ]
+                        }
+                    });
+                }
+                state.step = 'ask_goal';
+                return;
+            }
+            
             if (state.step === 'ask_goal' && params[0] === 'goal') {
                 const goalMapping = { 'lose': 'lose_weight', 'maintain': 'maintain_weight', 'gain': 'gain_mass' };
                 state.data.goal = goalMapping[value];
@@ -5805,7 +5857,8 @@ const setupBot = (app) => {
                         age: state.data.age,
                         height_cm: state.data.height_cm,
                         weight_kg: state.data.weight_kg,
-                        goal: state.data.goal
+                        goal: state.data.goal,
+                        timezone: state.data.timezone || 'Europe/Moscow'
                     }]).select().single();
 
                     if (error) throw error;
@@ -6588,6 +6641,81 @@ const setupBot = (app) => {
             return;
         }
 
+        // --- Profile Edit Callbacks ---
+        if (action === 'profile_edit') {
+            const field = params[0];
+            await bot.answerCallbackQuery(callbackQuery.id);
+
+            if (field === 'timezone') {
+                await bot.editMessageText('🌍 Выберите ваш часовой пояс:', {
+                    chat_id: chat_id,
+                    message_id: msg.message_id,
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: '🇷🇺 Москва (UTC+3)', callback_data: 'profile_set_timezone_Europe/Moscow' }],
+                            [{ text: '🇷🇺 Екатеринбург (UTC+5)', callback_data: 'profile_set_timezone_Asia/Yekaterinburg' }],
+                            [{ text: '🇷🇺 Новосибирск (UTC+7)', callback_data: 'profile_set_timezone_Asia/Novosibirsk' }],
+                            [{ text: '🇷🇺 Владивосток (UTC+10)', callback_data: 'profile_set_timezone_Asia/Vladivostok' }],
+                            [{ text: '🇺🇦 Киев (UTC+2)', callback_data: 'profile_set_timezone_Europe/Kiev' }],
+                            [{ text: '🇰🇿 Алматы (UTC+6)', callback_data: 'profile_set_timezone_Asia/Almaty' }],
+                            [{ text: '🔙 Назад к профилю', callback_data: 'profile_menu' }]
+                        ]
+                    }
+                });
+            }
+            return;
+        }
+
+        // --- Profile Set Timezone Callbacks ---
+        if (action === 'profile_set') {
+            const field = params[0];
+            const value = params[1];
+            await bot.answerCallbackQuery(callbackQuery.id);
+
+            if (field === 'timezone') {
+                try {
+                    const { error } = await supabase
+                        .from('profiles')
+                        .update({ timezone: value })
+                        .eq('telegram_id', telegram_id);
+
+                    if (error) throw error;
+
+                    const timezoneNames = {
+                        'Europe/Moscow': 'Москва (UTC+3)',
+                        'Asia/Yekaterinburg': 'Екатеринбург (UTC+5)',
+                        'Asia/Novosibirsk': 'Новосибирск (UTC+7)',
+                        'Asia/Vladivostok': 'Владивосток (UTC+10)',
+                        'Europe/Kiev': 'Киев (UTC+2)',
+                        'Asia/Almaty': 'Алматы (UTC+6)'
+                    };
+
+                    await bot.editMessageText(`✅ Часовой пояс обновлен на: ${timezoneNames[value] || value}\n\nТеперь уведомления будут приходить в удобное для вас время!`, {
+                        chat_id: chat_id,
+                        message_id: msg.message_id,
+                        reply_markup: {
+                            inline_keyboard: [
+                                [{ text: '🔙 Назад к профилю', callback_data: 'profile_menu' }],
+                                [{ text: '🏠 Главное меню', callback_data: 'main_menu' }]
+                            ]
+                        }
+                    });
+                } catch (error) {
+                    console.error('Error updating timezone:', error);
+                    await bot.editMessageText('❌ Произошла ошибка при обновлении часового пояса. Попробуйте позже.', {
+                        chat_id: chat_id,
+                        message_id: msg.message_id,
+                        reply_markup: {
+                            inline_keyboard: [
+                                [{ text: '🔙 Назад к профилю', callback_data: 'profile_menu' }]
+                            ]
+                        }
+                    });
+                }
+            }
+            return;
+        }
+
         // --- Universal Text Message Handler ---
         // Проверяем состояния регистрации и других операций
         if (registrationState[telegram_id] || 
@@ -6606,7 +6734,51 @@ const setupBot = (app) => {
     return bot;
 };
 
-// --- CRON JOBS TEMPORARILY DISABLED FOR DEBUGGING ---
-console.log('All cron jobs temporarily disabled for debugging');
+// --- CRON JOBS ---
+console.log('Setting up automated reporting...');
+
+// 🚀 Автоматическая отправка еженедельных VIP отчетов
+// Каждое воскресенье в 19:00 (вечером воскресенья)
+cron.schedule('0 19 * * 0', async () => {
+    try {
+        console.log('Starting automated weekly VIP reports...');
+        await sendWeeklyReports();
+        console.log('Automated weekly VIP reports completed successfully');
+    } catch (error) {
+        console.error('Error in automated weekly VIP reports:', error);
+    }
+}, {
+    timezone: "Europe/Moscow"
+});
+
+// 📊 Автоматическая отправка ежедневных отчетов
+// Каждый день в 09:00 (утром) - охватываем весь предыдущий день
+cron.schedule('0 9 * * *', async () => {
+    try {
+        console.log('Starting automated daily reports...');
+        await sendDailyReports();
+        console.log('Automated daily reports completed successfully');
+    } catch (error) {
+        console.error('Error in automated daily reports:', error);
+    }
+}, {
+    timezone: "Europe/Moscow"
+});
+
+// 🏆 Автоматическая генерация еженедельных челленджей
+// Каждый понедельник в 09:00 (начало новой недели)
+cron.schedule('0 9 * * 1', async () => {
+    try {
+        console.log('Creating new weekly challenge...');
+        await createWeeklyChallenge();
+        console.log('Weekly challenge created successfully');
+    } catch (error) {
+        console.error('Error creating weekly challenge:', error);
+    }
+}, {
+    timezone: "Europe/Moscow"
+});
+
+console.log('✅ All automated tasks scheduled successfully');
 
 module.exports = { setupBot }; 

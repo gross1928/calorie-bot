@@ -152,9 +152,14 @@ ADD COLUMN target_weight_kg NUMERIC;
 ALTER TABLE public.profiles
 ADD COLUMN timeframe_months INT;
 
+-- Добавляем колонку для часового пояса пользователя
+ALTER TABLE public.profiles
+ADD COLUMN timezone TEXT DEFAULT 'Europe/Moscow';
+
 -- Комментарии для колонок (хорошая практика)
 COMMENT ON COLUMN public.profiles.target_weight_kg IS 'Целевой вес пользователя в килограммах.';
 COMMENT ON COLUMN public.profiles.timeframe_months IS 'Срок для достижения цели в месяцах.';
+COMMENT ON COLUMN public.profiles.timezone IS 'Часовой пояс пользователя для персонализированных уведомлений.';
 
 -- 🏆 СИСТЕМА ЧЕЛЛЕНДЖЕЙ - Упрощенная версия SQL для Supabase
 -- Исправлены ошибки типов данных и упрощены политики безопасности
