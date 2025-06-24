@@ -3183,6 +3183,99 @@ const setupBot = (app) => {
 
     console.log('Обработчик для вебхука на Express настроен.');
 
+    // --- Premium Menu Function ---
+    const showPremiumMenu = async (chat_id, telegram_id) => {
+        const subscription = await getUserSubscription(telegram_id);
+        
+        let premiumText = `💎 **ТАРИФНЫЕ ПЛАНЫ**\n\n`;
+        
+        // Текущий тариф
+        const currentTierNames = {
+            'free': '🆓 БЕСПЛАТНЫЙ',
+            'promo': '⭐ ДЕМО (3 дня)',
+            'progress': '🚀 ПРОГРЕСС',
+            'maximum': '👑 МАКСИМУМ'
+        };
+        
+        const isPromoActive = subscription.promo_expires_at && new Date(subscription.promo_expires_at) > new Date();
+        let currentTier = subscription.tier;
+        if (currentTier === 'free' && isPromoActive) {
+            currentTier = 'promo';
+        }
+        
+        premiumText += `**Ваш текущий тариф:** ${currentTierNames[currentTier] || '🆓 БЕСПЛАТНЫЙ'}\n`;
+        if (isPromoActive) {
+            const expiresDate = new Date(subscription.promo_expires_at);
+            premiumText += `⏰ Демо истекает: ${expiresDate.toLocaleDateString('ru-RU')}\n`;
+        }
+        premiumText += `\n`;
+        
+        premiumText += `🆓 **БЕСПЛАТНЫЙ**\n` +
+            `• 2 фото в день\n` +
+            `• 5 AI вопросов в день\n` +
+            `• 5 ручных записей еды в день\n` +
+            `• 1 план тренировок в месяц\n` +
+            `• Статистика только за сегодня\n\n`;
+        
+        premiumText += `⭐ **ДЕМО** (3 дня бесплатно)\n` +
+            `• 15 фото в день\n` +
+            `• 20 AI вопросов в день\n` +
+            `• 15 ручных записей еды в день\n` +
+            `• 3 голосовых сообщения в день\n` +
+            `• 1 план питания в месяц\n` +
+            `• Статистика за день и неделю\n` +
+            `• Ежедневные отчеты\n\n`;
+        
+        premiumText += `🚀 **ПРОГРЕСС** - 199₽/мес\n` +
+            `• Безлимитные фото и AI\n` +
+            `• Безлимитные ручные записи\n` +
+            `• Безлимитные планы тренировок и питания\n` +
+            `• Полная статистика (день/неделя/месяц)\n` +
+            `• Ежедневные отчеты\n\n`;
+        
+        premiumText += `👑 **МАКСИМУМ** - 349₽/мес\n` +
+            `• Всё из тарифа ПРОГРЕСС\n` +
+            `• Безлимитные голосовые сообщения\n` +
+            `• Анализ медицинских данных\n` +
+            `• Еженедельные VIP отчеты с детальными рекомендациями\n` +
+            `• Приоритетная поддержка\n\n`;
+        
+        premiumText += `🎯 *Выберите подходящий тариф:*`;
+        
+        // Формируем кнопки
+        let buttons = [];
+        
+        // Проверяем, использовал ли пользователь уже промо
+        const { data: existingPromo } = await supabase
+            .from('user_subscriptions')
+            .select('*')
+            .eq('telegram_id', telegram_id)
+            .not('promo_activated_at', 'is', null)
+            .single();
+        
+        // Добавляем кнопку демо только если не использовал ранее и текущий тариф не выше
+        if (!existingPromo && subscription.tier === 'free' && !isPromoActive) {
+            buttons.push([{ text: '🎁 ДЕМО-ДОСТУП НА 3 ДНЯ', callback_data: 'activate_premium_demo' }]);
+        }
+        
+        // Добавляем платные тарифы только если текущий тариф ниже
+        if (subscription.tier !== 'progress' && subscription.tier !== 'maximum') {
+            buttons.push([{ text: '🚀 ПРОГРЕСС 199₽/мес', callback_data: 'subscribe_premium_progress' }]);
+        }
+        if (subscription.tier !== 'maximum') {
+            buttons.push([{ text: '👑 МАКСИМУМ 349₽/мес', callback_data: 'subscribe_premium_maximum' }]);
+        }
+        
+        buttons.push([{ text: '🔙 Назад в главное меню', callback_data: 'back_to_main_menu' }]);
+        
+        await bot.sendMessage(chat_id, premiumText, {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: buttons
+            }
+        });
+    };
+
     // --- Main Menu Function ---
     const showMainMenu = (chat_id, text) => {
         bot.sendMessage(chat_id, text, {
@@ -3192,7 +3285,7 @@ const setupBot = (app) => {
                     [{ text: '✍️ Добавить вручную' }, { text: '📊 Статистика' }],
                     [{ text: '🏋️ План тренировок' }, { text: '🍽️ План питания' }],
                     [{ text: '💧 Отслеживание воды' }, { text: '🏆 Челлендж' }],
-                    [{ text: '👤 Профиль' }]
+                    [{ text: '👤 Профиль' }, { text: '💎 ПРЕМИУМ' }]
                 ],
                 resize_keyboard: true,
                 one_time_keyboard: false
@@ -3690,6 +3783,10 @@ const setupBot = (app) => {
         }
         if (msg.text === '🏆 Челлендж') {
             showChallengeMenu(chat_id, telegram_id);
+            return;
+        }
+        if (msg.text === '💎 ПРЕМИУМ') {
+            await showPremiumMenu(chat_id, telegram_id);
             return;
         }
 
@@ -5115,6 +5212,106 @@ const setupBot = (app) => {
                 chat_id, message_id: msg.message_id,
                 parse_mode: 'Markdown'
             });
+            return;
+        }
+
+        // --- Premium Menu Callbacks ---
+        if (data === 'activate_premium_demo') {
+            await bot.answerCallbackQuery(callbackQuery.id);
+            
+            const subscription = await getUserSubscription(telegram_id);
+            if (subscription.tier !== 'free') {
+                await bot.editMessageText('У вас уже есть активная подписка! 😊', {
+                    chat_id, message_id: msg.message_id
+                });
+                return;
+            }
+
+            // Проверяем, не использовал ли уже пользователь демо
+            const { data: existingPromo, error } = await supabase
+                .from('user_subscriptions')
+                .select('*')
+                .eq('telegram_id', telegram_id)
+                .not('promo_activated_at', 'is', null)
+                .single();
+
+            if (existingPromo && !error) {
+                await bot.editMessageText('🚫 Демо-доступ можно использовать только один раз 😔\n\nВыберите платную подписку для продолжения использования премиум функций.', {
+                    chat_id, message_id: msg.message_id,
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: '🚀 ПРОГРЕСС 199₽/мес', callback_data: 'subscribe_premium_progress' }],
+                            [{ text: '👑 МАКСИМУМ 349₽/мес', callback_data: 'subscribe_premium_maximum' }],
+                            [{ text: '🔙 Назад', callback_data: 'back_to_premium_menu' }]
+                        ]
+                    }
+                });
+                return;
+            }
+
+            // Активируем промо
+            const result = await activatePromo(telegram_id);
+            if (result.success) {
+                await bot.editMessageText('🎉 **Демо-доступ активирован на 3 дня!**\n\n✨ Теперь вам доступны:\n• Расширенные лимиты на все функции\n• Голосовые сообщения (3 в день)\n• План питания\n• Ежедневные отчеты\n• Расширенная статистика\n\n🚀 Приятного использования!', {
+                    chat_id, message_id: msg.message_id,
+                    parse_mode: 'Markdown',
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: '🔙 В главное меню', callback_data: 'back_to_main_menu' }]
+                        ]
+                    }
+                });
+            } else {
+                await bot.editMessageText(`❌ Ошибка активации: ${result.error}`, {
+                    chat_id, message_id: msg.message_id
+                });
+            }
+            return;
+        }
+
+        if (data === 'subscribe_premium_progress') {
+            await bot.answerCallbackQuery(callbackQuery.id);
+            
+            await bot.editMessageText(`💳 **Оформление подписки ПРОГРЕСС**\n\n💰 Стоимость: 199₽/мес\n\n📋 **Что входит:**\n• Безлимитные фото и AI вопросы\n• Безлимитные ручные записи\n• Безлимитные планы тренировок и питания\n• Полная статистика\n• Ежедневные отчеты\n\n💳 Для оплаты перейдите по ссылке ниже:\n\n[ССЫЛКА НА ОПЛАТУ БУДЕТ ЗДЕСЬ]\n\n⏰ Тариф активируется автоматически после оплаты.`, {
+                chat_id, message_id: msg.message_id,
+                parse_mode: 'Markdown',
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: '💳 Оплатить 199₽/мес', url: 'https://placeholder-payment-link.com' }],
+                        [{ text: '🔙 Назад', callback_data: 'back_to_premium_menu' }]
+                    ]
+                }
+            });
+            return;
+        }
+
+        if (data === 'subscribe_premium_maximum') {
+            await bot.answerCallbackQuery(callbackQuery.id);
+            
+            await bot.editMessageText(`💳 **Оформление подписки МАКСИМУМ**\n\n💰 Стоимость: 349₽/мес\n\n📋 **Что входит:**\n• Всё из тарифа ПРОГРЕСС\n• Безлимитные голосовые сообщения\n• Анализ медицинских данных\n• Еженедельные VIP отчеты\n• Приоритетная поддержка\n\n💳 Для оплаты перейдите по ссылке ниже:\n\n[ССЫЛКА НА ОПЛАТУ БУДЕТ ЗДЕСЬ]\n\n⏰ Тариф активируется автоматически после оплаты.`, {
+                chat_id, message_id: msg.message_id,
+                parse_mode: 'Markdown',
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: '💳 Оплатить 349₽/мес', url: 'https://placeholder-payment-link.com' }],
+                        [{ text: '🔙 Назад', callback_data: 'back_to_premium_menu' }]
+                    ]
+                }
+            });
+            return;
+        }
+
+        if (data === 'back_to_premium_menu') {
+            await bot.answerCallbackQuery(callbackQuery.id);
+            await bot.deleteMessage(chat_id, msg.message_id);
+            await showPremiumMenu(chat_id, telegram_id);
+            return;
+        }
+
+        if (data === 'back_to_main_menu') {
+            await bot.answerCallbackQuery(callbackQuery.id);
+            await bot.deleteMessage(chat_id, msg.message_id);
+            showMainMenu(chat_id, 'Возвращаемся в главное меню 🏠');
             return;
         }
 
@@ -6655,8 +6852,8 @@ const setupBot = (app) => {
                             [{ text: '🇷🇺 Екатеринбург (UTC+5)', callback_data: 'profile_set_timezone_Asia/Yekaterinburg' }],
                             [{ text: '🇷🇺 Новосибирск (UTC+7)', callback_data: 'profile_set_timezone_Asia/Novosibirsk' }],
                             [{ text: '🇷🇺 Владивосток (UTC+10)', callback_data: 'profile_set_timezone_Asia/Vladivostok' }],
-                            [{ text: '🇺🇦 Киев (UTC+2)', callback_data: 'profile_set_timezone_Europe/Kiev' }],
-                            [{ text: '🇰🇿 Алматы (UTC+6)', callback_data: 'profile_set_timezone_Asia/Almaty' }],
+                            [{ text: '🇷🇺 Калининград (UTC+2)', callback_data: 'profile_set_timezone_Europe/Kiev' }],
+                            [{ text: '🇷🇺 Омск (UTC+6)', callback_data: 'profile_set_timezone_Asia/Almaty' }],
                             [{ text: '🔙 Назад к профилю', callback_data: 'profile_menu' }]
                         ]
                     }
@@ -6685,8 +6882,8 @@ const setupBot = (app) => {
                         'Asia/Yekaterinburg': 'Екатеринбург (UTC+5)',
                         'Asia/Novosibirsk': 'Новосибирск (UTC+7)',
                         'Asia/Vladivostok': 'Владивосток (UTC+10)',
-                        'Europe/Kiev': 'Киев (UTC+2)',
-                        'Asia/Almaty': 'Алматы (UTC+6)'
+                        'Europe/Kiev': 'Калининград (UTC+2)',
+                        'Asia/Almaty': 'Омск (UTC+6)'
                     };
 
                     await bot.editMessageText(`✅ Часовой пояс обновлен на: ${timezoneNames[value] || value}\n\nТеперь уведомления будут приходить в удобное для вас время!`, {
