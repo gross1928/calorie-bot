@@ -5,6 +5,8 @@ const crypto = require('crypto');
 const cron = require('node-cron');
 // Добавляем импорт программ тренировок
 const { USER_WORKOUT_PROGRAMS } = require('./user_workout_programs.js');
+// Интеграция с ЮKassa
+const { getQuickPaymentLink, createPayment, checkPaymentStatus } = require('./yukassaClient');
 
 require('dotenv').config();
 
@@ -5272,12 +5274,16 @@ const setupBot = (app) => {
         if (data === 'subscribe_premium_progress') {
             await bot.answerCallbackQuery(callbackQuery.id);
             
-            await bot.editMessageText(`💳 **Оформление подписки ПРОГРЕСС**\n\n💰 Стоимость: 199₽/мес\n\n📋 **Что входит:**\n• Безлимитные фото и AI вопросы\n• Безлимитные ручные записи\n• Безлимитные планы тренировок и питания\n• Полная статистика\n• Ежедневные отчеты\n\n💳 Для оплаты перейдите по ссылке ниже:\n\n[ССЫЛКА НА ОПЛАТУ БУДЕТ ЗДЕСЬ]\n\n⏰ Тариф активируется автоматически после оплаты.`, {
+            // Получаем ссылку для быстрой оплаты
+            const paymentLink = getQuickPaymentLink('progress');
+            
+            await bot.editMessageText(`💳 **Оформление подписки ПРОГРЕСС**\n\n💰 Стоимость: 199₽/мес\n\n📋 **Что входит:**\n• Безлимитные фото и AI вопросы\n• Безлимитные ручные записи\n• Безлимитные планы тренировок и питания\n• Полная статистика\n• Ежедневные отчеты\n\n💳 Для оплаты перейдите по ссылке ниже:\n\n⏰ **Тариф активируется автоматически после оплаты**\n\n⚠️ *После оплаты может потребоваться до 5 минут для активации подписки*`, {
                 chat_id, message_id: msg.message_id,
                 parse_mode: 'Markdown',
                 reply_markup: {
                     inline_keyboard: [
-                        [{ text: '💳 Оплатить 199₽/мес', url: 'https://placeholder-payment-link.com' }],
+                        [{ text: '💳 Оплатить 199₽/мес', url: paymentLink }],
+                        [{ text: '🔄 Проверить оплату', callback_data: 'check_payment_progress' }],
                         [{ text: '🔙 Назад', callback_data: 'back_to_premium_menu' }]
                     ]
                 }
@@ -5288,16 +5294,105 @@ const setupBot = (app) => {
         if (data === 'subscribe_premium_maximum') {
             await bot.answerCallbackQuery(callbackQuery.id);
             
-            await bot.editMessageText(`💳 **Оформление подписки МАКСИМУМ**\n\n💰 Стоимость: 349₽/мес\n\n📋 **Что входит:**\n• Всё из тарифа ПРОГРЕСС\n• Безлимитные голосовые сообщения\n• Анализ медицинских данных\n• Еженедельные VIP отчеты\n• Приоритетная поддержка\n\n💳 Для оплаты перейдите по ссылке ниже:\n\n[ССЫЛКА НА ОПЛАТУ БУДЕТ ЗДЕСЬ]\n\n⏰ Тариф активируется автоматически после оплаты.`, {
+            // Получаем ссылку для быстрой оплаты
+            const paymentLink = getQuickPaymentLink('maximum');
+            
+            await bot.editMessageText(`💳 **Оформление подписки МАКСИМУМ**\n\n💰 Стоимость: 349₽/мес\n\n📋 **Что входит:**\n• Всё из тарифа ПРОГРЕСС\n• Безлимитные голосовые сообщения\n• Анализ медицинских данных\n• Еженедельные VIP отчеты\n• Приоритетная поддержка\n\n💳 Для оплаты перейдите по ссылке ниже:\n\n⏰ **Тариф активируется автоматически после оплаты**\n\n⚠️ *После оплаты может потребоваться до 5 минут для активации подписки*`, {
                 chat_id, message_id: msg.message_id,
                 parse_mode: 'Markdown',
                 reply_markup: {
                     inline_keyboard: [
-                        [{ text: '💳 Оплатить 349₽/мес', url: 'https://placeholder-payment-link.com' }],
+                        [{ text: '💳 Оплатить 349₽/мес', url: paymentLink }],
+                        [{ text: '🔄 Проверить оплату', callback_data: 'check_payment_maximum' }],
                         [{ text: '🔙 Назад', callback_data: 'back_to_premium_menu' }]
                     ]
                 }
             });
+            return;
+        }
+
+        // === ОБРАБОТЧИКИ ПРОВЕРКИ ПЛАТЕЖЕЙ ===
+        
+        if (data === 'check_payment_progress' || data === 'check_payment_maximum') {
+            await bot.answerCallbackQuery(callbackQuery.id);
+            
+            const tier = data === 'check_payment_progress' ? 'progress' : 'maximum';
+            
+            // Проверяем текущую подписку пользователя
+            const subscription = await getUserSubscription(telegram_id);
+            
+            if (subscription.tier === tier) {
+                await bot.editMessageText(`✅ **Подписка ${tier.toUpperCase()} уже активна!**\n\n🎉 Добро пожаловать в премиум!\n\n📋 Все функции тарифа доступны в главном меню.`, {
+                    chat_id, message_id: msg.message_id,
+                    parse_mode: 'Markdown',
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: '🏠 Главное меню', callback_data: 'back_to_main_menu' }],
+                            [{ text: '📋 Мои тарифы', callback_data: 'back_to_premium_menu' }]
+                        ]
+                    }
+                });
+            } else {
+                // Ищем платежи пользователя в базе данных
+                const { data: payments, error } = await supabase
+                    .from('yukassa_payments')
+                    .select('*')
+                    .eq('telegram_id', telegram_id)
+                    .eq('subscription_tier', tier)
+                    .order('created_at', { ascending: false })
+                    .limit(1);
+
+                if (error) {
+                    await bot.editMessageText(`❌ Ошибка проверки платежа. Попробуйте позже.`, {
+                        chat_id, message_id: msg.message_id,
+                        reply_markup: {
+                            inline_keyboard: [
+                                [{ text: '🔙 Назад', callback_data: 'back_to_premium_menu' }]
+                            ]
+                        }
+                    });
+                    return;
+                }
+
+                if (payments && payments.length > 0) {
+                    const latestPayment = payments[0];
+                    if (latestPayment.status === 'succeeded') {
+                        await bot.editMessageText(`✅ **Платёж найден и обрабатывается!**\n\nПодождите, подписка будет активирована в течение нескольких минут.\n\n🔄 Попробуйте проверить ещё раз через минуту.`, {
+                            chat_id, message_id: msg.message_id,
+                            parse_mode: 'Markdown',
+                            reply_markup: {
+                                inline_keyboard: [
+                                    [{ text: '🔄 Проверить снова', callback_data: data }],
+                                    [{ text: '🔙 Назад', callback_data: 'back_to_premium_menu' }]
+                                ]
+                            }
+                        });
+                    } else {
+                        await bot.editMessageText(`⏳ **Платёж в обработке...**\n\nСтатус: ${latestPayment.status}\n\nПожалуйста, подождите. Обычно обработка занимает до 5 минут.`, {
+                            chat_id, message_id: msg.message_id,
+                            parse_mode: 'Markdown',
+                            reply_markup: {
+                                inline_keyboard: [
+                                    [{ text: '🔄 Проверить снова', callback_data: data }],
+                                    [{ text: '🔙 Назад', callback_data: 'back_to_premium_menu' }]
+                                ]
+                            }
+                        });
+                    }
+                } else {
+                    await bot.editMessageText(`❌ **Платёж не найден**\n\nВозможные причины:\n• Платёж ещё не был совершён\n• Платёж в обработке (до 5 минут)\n• Используйте точную ссылку для оплаты\n\n💡 После оплаты нажмите "Проверить оплату"`, {
+                        chat_id, message_id: msg.message_id,
+                        parse_mode: 'Markdown',
+                        reply_markup: {
+                            inline_keyboard: [
+                                [{ text: '🔄 Проверить снова', callback_data: data }],
+                                [{ text: '💳 Перейти к оплате', callback_data: `subscribe_premium_${tier}` }],
+                                [{ text: '🔙 Назад', callback_data: 'back_to_premium_menu' }]
+                            ]
+                        }
+                    });
+                }
+            }
             return;
         }
 

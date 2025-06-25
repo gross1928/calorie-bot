@@ -652,3 +652,99 @@ BEGIN
     WHERE p.telegram_id = p_telegram_id;
 END;
 $$ LANGUAGE plpgsql;
+
+-- === ИНТЕГРАЦИЯ С ЮKASSA ===
+
+-- Таблица для отслеживания платежей через ЮKassa
+CREATE TABLE IF NOT EXISTS public.yukassa_payments (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    telegram_id BIGINT NOT NULL,
+    payment_id UUID NOT NULL UNIQUE, -- ID платежа из ЮKassa
+    amount DECIMAL(10,2) NOT NULL, -- Сумма платежа
+    currency VARCHAR(3) NOT NULL DEFAULT 'RUB',
+    subscription_tier VARCHAR(20) NOT NULL, -- 'progress' или 'maximum'
+    status VARCHAR(20) NOT NULL DEFAULT 'pending', -- pending, succeeded, failed, canceled
+    payment_url TEXT, -- Ссылка для оплаты
+    confirmation_token TEXT, -- Токен подтверждения от ЮKassa
+    paid_at TIMESTAMP WITH TIME ZONE, -- Время успешной оплаты
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL, -- Время истечения ссылки
+    metadata JSONB, -- Дополнительные данные от ЮKassa
+    webhook_received_at TIMESTAMP WITH TIME ZONE, -- Время получения webhook
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- Индексы для быстрого поиска платежей
+CREATE INDEX IF NOT EXISTS idx_yukassa_payments_user_id ON public.yukassa_payments(user_id);
+CREATE INDEX IF NOT EXISTS idx_yukassa_payments_telegram_id ON public.yukassa_payments(telegram_id);
+CREATE INDEX IF NOT EXISTS idx_yukassa_payments_payment_id ON public.yukassa_payments(payment_id);
+CREATE INDEX IF NOT EXISTS idx_yukassa_payments_status ON public.yukassa_payments(status);
+CREATE INDEX IF NOT EXISTS idx_yukassa_payments_created_at ON public.yukassa_payments(created_at);
+
+-- Включаем Row Level Security
+ALTER TABLE public.yukassa_payments ENABLE ROW LEVEL SECURITY;
+
+-- Политики для полного доступа
+CREATE POLICY "Allow public all operations on yukassa_payments" 
+ON public.yukassa_payments FOR ALL 
+TO public 
+USING (true) 
+WITH CHECK (true);
+
+-- Функция для активации подписки после успешной оплаты
+CREATE OR REPLACE FUNCTION activate_subscription_after_payment(
+    p_telegram_id BIGINT,
+    p_subscription_tier VARCHAR(20),
+    p_payment_id UUID
+)
+RETURNS BOOLEAN AS $$
+DECLARE
+    v_user_id BIGINT;
+    v_expires_at TIMESTAMP WITH TIME ZONE;
+BEGIN
+    -- Получаем user_id по telegram_id
+    SELECT id INTO v_user_id 
+    FROM public.profiles 
+    WHERE telegram_id = p_telegram_id;
+    
+    IF v_user_id IS NULL THEN
+        RETURN FALSE;
+    END IF;
+    
+    -- Вычисляем дату истечения подписки (30 дней)
+    v_expires_at := timezone('utc'::text, now()) + INTERVAL '30 days';
+    
+    -- Обновляем или создаем запись подписки
+    INSERT INTO public.user_subscriptions (user_id, plan, tier, is_active, expires_at, payment_id, updated_at)
+    VALUES (v_user_id, p_subscription_tier, p_subscription_tier, TRUE, v_expires_at, p_payment_id::TEXT, timezone('utc'::text, now()))
+    ON CONFLICT (user_id) 
+    DO UPDATE SET
+        plan = p_subscription_tier,
+        tier = p_subscription_tier,
+        is_active = TRUE,
+        expires_at = v_expires_at,
+        payment_id = p_payment_id::TEXT,
+        updated_at = timezone('utc'::text, now());
+    
+    -- Отмечаем платеж как успешный
+    UPDATE public.yukassa_payments
+    SET 
+        status = 'succeeded',
+        paid_at = timezone('utc'::text, now()),
+        webhook_received_at = timezone('utc'::text, now()),
+        updated_at = timezone('utc'::text, now())
+    WHERE payment_id = p_payment_id;
+    
+    RETURN TRUE;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Комментарии к таблице
+COMMENT ON TABLE public.yukassa_payments IS 'Отслеживание платежей через ЮKassa API';
+COMMENT ON COLUMN public.yukassa_payments.payment_id IS 'Уникальный ID платежа от ЮKassa';
+COMMENT ON COLUMN public.yukassa_payments.amount IS 'Сумма платежа в рублях';
+COMMENT ON COLUMN public.yukassa_payments.subscription_tier IS 'Тип подписки: progress (199₽) или maximum (349₽)';
+COMMENT ON COLUMN public.yukassa_payments.status IS 'Статус платежа: pending, succeeded, failed, canceled';
+COMMENT ON COLUMN public.yukassa_payments.confirmation_token IS 'Токен для подтверждения платежа';
+COMMENT ON COLUMN public.yukassa_payments.metadata IS 'Дополнительные данные от ЮKassa в формате JSON';
