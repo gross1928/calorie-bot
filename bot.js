@@ -3829,7 +3829,7 @@ const setupBot = (app) => {
                 if (recognitionResult.success) {
                     const mealData = recognitionResult.data;
                     const confirmationId = crypto.randomUUID();
-                    mealConfirmationCache[confirmationId] = { ...mealData, meal_type: 'photo', telegram_id };
+                    mealConfirmationCache[confirmationId] = { ...mealData, meal_type: 'photo', telegram_id, timestamp: Date.now() };
 
                                         const ingredientsString = mealData.ingredients.join(', ');
 
@@ -3903,7 +3903,7 @@ const setupBot = (app) => {
                                 if (foodAnalysisResult.success) {
                                     const mealData = foodAnalysisResult.data;
                                     const confirmationId = crypto.randomUUID();
-                                    mealConfirmationCache[confirmationId] = { ...mealData, meal_type: 'voice', telegram_id };
+                                    mealConfirmationCache[confirmationId] = { ...mealData, meal_type: 'voice', telegram_id, timestamp: Date.now() };
 
                                     const callback_data = `meal_confirm_${confirmationId}`;
                                     const cancel_callback_data = `meal_cancel_${confirmationId}`;
@@ -4294,7 +4294,7 @@ const setupBot = (app) => {
                  if (newFoodData.success) {
                     const mealData = newFoodData.data;
                     const confirmationId = crypto.randomUUID();
-                    mealConfirmationCache[confirmationId] = { ...mealData, meal_type: 'photo', telegram_id };
+                    mealConfirmationCache[confirmationId] = { ...mealData, meal_type: 'photo', telegram_id, timestamp: Date.now() };
 
                     const newText = `✅ *Продукты обновлены для "${mealData.dish_name}"*\n\n` +
                                     `Продукты:\n- ${mealData.ingredients.join('\n- ')}\n\n` +
@@ -4616,7 +4616,7 @@ const setupBot = (app) => {
                 if (recognitionResult.success) {
                     const mealData = recognitionResult.data;
                     const confirmationId = crypto.randomUUID();
-                    mealConfirmationCache[confirmationId] = { ...mealData, meal_type: 'manual', telegram_id };
+                    mealConfirmationCache[confirmationId] = { ...mealData, meal_type: 'manual', telegram_id, timestamp: Date.now() };
 
                     const callback_data = `meal_confirm_${confirmationId}`;
                     const cancel_callback_data = `meal_cancel_${confirmationId}`;
@@ -4628,7 +4628,16 @@ const setupBot = (app) => {
                         parse_mode: 'Markdown',
                         reply_markup: {
                             inline_keyboard: [
-                                [{ text: '✅ Да, сохранить', callback_data }, { text: '❌ Нет, отменить', callback_data: cancel_callback_data }]
+                                [
+                                    { text: '✅ Да, сохранить', callback_data }
+                                ],
+                                [
+                                    { text: '⚖️ Изменить граммы', callback_data: `meal_edit_grams_${confirmationId}` },
+                                    { text: '✏️ Изменить ингредиенты', callback_data: `meal_edit_ingredients_${confirmationId}` }
+                                ],
+                                [
+                                    { text: '❌ Отменить', callback_data: cancel_callback_data }
+                                ]
                             ]
                         }
                     });
@@ -6937,6 +6946,71 @@ const setupBot = (app) => {
             const field = params[0];
             await bot.answerCallbackQuery(callbackQuery.id);
 
+            // Устанавливаем состояние редактирования для всех полей кроме gender и goal
+            if (['name', 'age', 'height', 'weight', 'target_weight', 'timeframe'].includes(field)) {
+                profileEditState[telegram_id] = { field: field };
+                
+                let promptText = '';
+                switch (field) {
+                    case 'name':
+                        promptText = '👋 Введите новое имя:';
+                        break;
+                    case 'age':
+                        promptText = '🎂 Введите ваш возраст (от 10 до 100 лет):';
+                        break;
+                    case 'height':
+                        promptText = '📏 Введите ваш рост в см (от 100 до 250):';
+                        break;
+                    case 'weight':
+                        promptText = '⚖️ Введите ваш текущий вес в кг (от 20 до 300):';
+                        break;
+                    case 'target_weight':
+                        promptText = '🏆 Введите ваш целевой вес в кг (от 20 до 300):';
+                        break;
+                    case 'timeframe':
+                        promptText = '⏱️ Введите срок достижения цели в месяцах (от 1 до 24):';
+                        break;
+                }
+                
+                await bot.editMessageText(promptText, {
+                    chat_id: chat_id,
+                    message_id: msg.message_id,
+                    reply_markup: null
+                });
+                return;
+            }
+            
+            if (field === 'gender') {
+                await bot.editMessageText('👤 Выберите ваш пол:', {
+                    chat_id: chat_id,
+                    message_id: msg.message_id,
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: 'Мужской', callback_data: 'profile_set_gender_male' }],
+                            [{ text: 'Женский', callback_data: 'profile_set_gender_female' }],
+                            [{ text: '🔙 Назад к профилю', callback_data: 'profile_menu' }]
+                        ]
+                    }
+                });
+                return;
+            }
+            
+            if (field === 'goal') {
+                await bot.editMessageText('🎯 Выберите вашу цель:', {
+                    chat_id: chat_id,
+                    message_id: msg.message_id,
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: 'Похудение', callback_data: 'profile_set_goal_lose_weight' }],
+                            [{ text: 'Набор массы', callback_data: 'profile_set_goal_gain_mass' }],
+                            [{ text: 'Поддержание веса', callback_data: 'profile_set_goal_maintain' }],
+                            [{ text: '🔙 Назад к профилю', callback_data: 'profile_menu' }]
+                        ]
+                    }
+                });
+                return;
+            }
+
             if (field === 'timezone') {
                 await bot.editMessageText('🌍 Выберите ваш часовой пояс:', {
                     chat_id: chat_id,
@@ -6953,25 +7027,35 @@ const setupBot = (app) => {
                         ]
                     }
                 });
+                return;
             }
+            
             return;
         }
 
-        // --- Profile Set Timezone Callbacks ---
+        // --- Profile Set Callbacks ---
         if (action === 'profile_set') {
             const field = params[0];
             const value = params[1];
             await bot.answerCallbackQuery(callbackQuery.id);
 
-            if (field === 'timezone') {
-                try {
-                    const { error } = await supabase
-                        .from('profiles')
-                        .update({ timezone: value })
-                        .eq('telegram_id', telegram_id);
-
-                    if (error) throw error;
-
+            try {
+                let updateData = {};
+                let successMessage = '';
+                
+                if (field === 'gender') {
+                    updateData.gender = value;
+                    successMessage = `✅ Пол обновлен на: ${value === 'male' ? 'Мужской' : 'Женский'}`;
+                } else if (field === 'goal') {
+                    updateData.goal = value;
+                    const goalNames = {
+                        'lose_weight': 'Похудение',
+                        'gain_mass': 'Набор массы',
+                        'maintain': 'Поддержание веса'
+                    };
+                    successMessage = `✅ Цель обновлена на: ${goalNames[value] || value}`;
+                } else if (field === 'timezone') {
+                    updateData.timezone = value;
                     const timezoneNames = {
                         'Europe/Moscow': 'Москва (UTC+3)',
                         'Asia/Yekaterinburg': 'Екатеринбург (UTC+5)',
@@ -6980,30 +7064,67 @@ const setupBot = (app) => {
                         'Europe/Kiev': 'Калининград (UTC+2)',
                         'Asia/Almaty': 'Омск (UTC+6)'
                     };
-
-                    await bot.editMessageText(`✅ Часовой пояс обновлен на: ${timezoneNames[value] || value}\n\nТеперь уведомления будут приходить в удобное для вас время!`, {
-                        chat_id: chat_id,
-                        message_id: msg.message_id,
-                        reply_markup: {
-                            inline_keyboard: [
-                                [{ text: '🔙 Назад к профилю', callback_data: 'profile_menu' }],
-                                [{ text: '🏠 Главное меню', callback_data: 'main_menu' }]
-                            ]
-                        }
-                    });
-                } catch (error) {
-                    console.error('Error updating timezone:', error);
-                    await bot.editMessageText('❌ Произошла ошибка при обновлении часового пояса. Попробуйте позже.', {
-                        chat_id: chat_id,
-                        message_id: msg.message_id,
-                        reply_markup: {
-                            inline_keyboard: [
-                                [{ text: '🔙 Назад к профилю', callback_data: 'profile_menu' }]
-                            ]
-                        }
-                    });
+                    successMessage = `✅ Часовой пояс обновлен на: ${timezoneNames[value] || value}\n\nТеперь уведомления будут приходить в удобное для вас время!`;
                 }
+
+                const { error } = await supabase
+                    .from('profiles')
+                    .update(updateData)
+                    .eq('telegram_id', telegram_id);
+
+                if (error) throw error;
+
+                // Пересчитываем нормы если изменилась цель или пол
+                if (field === 'goal' || field === 'gender') {
+                    const { data: profile } = await supabase
+                        .from('profiles')
+                        .select('*')
+                        .eq('telegram_id', telegram_id)
+                        .single();
+                    
+                    if (profile) {
+                        await calculateAndSaveNorms(profile);
+                    }
+                }
+
+                await bot.editMessageText(successMessage, {
+                    chat_id: chat_id,
+                    message_id: msg.message_id,
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: '🔙 Назад к профилю', callback_data: 'profile_menu' }],
+                            [{ text: '🏠 Главное меню', callback_data: 'main_menu' }]
+                        ]
+                    }
+                });
+                
+            } catch (error) {
+                console.error('Error updating profile field:', error);
+                await bot.editMessageText('❌ Произошла ошибка при обновлении профиля. Попробуйте позже.', {
+                    chat_id: chat_id,
+                    message_id: msg.message_id,
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: '🔙 Назад к профилю', callback_data: 'profile_menu' }]
+                        ]
+                    }
+                });
             }
+            return;
+        }
+
+        // --- Profile Menu Callback ---
+        if (action === 'profile_menu') {
+            await bot.answerCallbackQuery(callbackQuery.id);
+            closeConflictingStates(telegram_id, 'profile_menu');
+            
+            // Удаляем текущее сообщение и показываем новое меню профиля
+            try {
+                await bot.deleteMessage(chat_id, msg.message_id);
+            } catch (error) {
+                // Игнорируем ошибку если сообщение уже удалено
+            }
+            showProfileMenu(chat_id, telegram_id);
             return;
         }
 
