@@ -5201,11 +5201,14 @@ const setupBot = (app) => {
                 action = parts[0];
                 params = parts.slice(1);
             }
-        } else if (data.startsWith('meal_edit_') || data.startsWith('meal_update_')) {
-            // Специальная обработка для meal callbacks
+        } else if (data.startsWith('meal_edit_') || data.startsWith('meal_update_') || data.startsWith('register_')) {
+            // Специальная обработка для meal callbacks и регистрации
             const parts = data.split('_');
-            if (parts.length >= 3) {
-                action = `${parts[0]}_${parts[1]}`; // meal_edit или meal_update
+            if (parts.length >= 4) {
+                action = `${parts[0]}_${parts[1]}_${parts[2]}`; // meal_edit_grams или meal_update_grams
+                params = parts.slice(3); // остальные параметры
+            } else if (parts.length >= 3) {
+                action = `${parts[0]}_${parts[1]}`; // meal_edit, meal_update или register_goal
                 params = parts.slice(2); // остальные параметры
             } else {
                 action = parts[0];
@@ -6186,7 +6189,7 @@ const setupBot = (app) => {
         }
 
         // --- Registration Callbacks ---
-        if (action === 'register' && registrationState[telegram_id]) {
+        if ((action === 'register' || action === 'register_goal') && registrationState[telegram_id]) {
             const state = registrationState[telegram_id];
             const value = params[params.length - 1];
             await bot.answerCallbackQuery(callbackQuery.id);
