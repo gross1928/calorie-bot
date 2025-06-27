@@ -1880,9 +1880,9 @@ const showProfileMenu = async (chat_id, telegram_id) => {
         }
 
         // Преобразуем цель в человекочитаемый вид
-        const goalText = profile.goal === 'lose_weight' ? 'Похудение' :
-                        profile.goal === 'gain_mass' ? 'Набор массы' :
-                        profile.goal === 'maintain' ? 'Поддержание веса' : profile.goal;
+                        const goalText = profile.goal === 'lose_weight' ? 'Похудение' :
+                    profile.goal === 'gain_mass' ? 'Набор массы' :
+                    profile.goal === 'maintain_weight' ? 'Поддержание веса' : profile.goal;
 
         // Экранируем специальные символы для Markdown
         const escapeName = (name) => name.replace(/[_*[\]()~`>#+=|{}.!-]/g, '\\$&');
@@ -2879,7 +2879,7 @@ const generateWeeklyReport = async (telegram_id) => {
         // ПЛАН НА РОСТ И ДОСТИЖЕНИЕ ЦЕЛЕЙ
         reportText += `🎯 **СТРАТЕГИЧЕСКИЙ ПЛАН НА СЛЕДУЮЩУЮ НЕДЕЛЮ:**\n`;
         
-        if (profile.goal === 'lose') {
+        if (profile.goal === 'lose_weight') {
             const weeklyDeficit = (profile.daily_calories - dailyAverages.calories) * 7;
             const predictedWeightLoss = weeklyDeficit / 7700; // 1 кг = 7700 ккал
             
@@ -2891,7 +2891,7 @@ const generateWeeklyReport = async (telegram_id) => {
             reportText += `• 🥩 Белки: ${(profile.weight_kg * 1.6).toFixed(0)}г/день для сохранения мышц\n`;
             reportText += `• 🏃‍♂️ Кардио 3-4 раза по 30-45 мин\n`;
             reportText += `• 💪 Силовые 2-3 раза для поддержания метаболизма\n`;
-        } else if (profile.goal === 'gain') {
+        } else if (profile.goal === 'gain_mass') {
             reportText += `📈 **ЦЕЛЬ: НАБОР МАССЫ**\n`;
             reportText += `• 🔥 Профицит 300-500 ккал/день\n`;
             reportText += `• 🥩 Белки: ${(profile.weight_kg * 1.8).toFixed(0)}г/день для роста мышц\n`;
@@ -3880,24 +3880,18 @@ const setupBot = (app) => {
                 const fileInfo = await bot.getFile(photo.file_id);
                 const photoUrl = `https://api.telegram.org/file/bot${token}/${fileInfo.file_path}`;
                 
-                // Постепенное обновление статуса
-                setTimeout(async () => {
-                    try {
-                        await safeEditMessage(bot, '📸 Распознаю блюда на фото...', {
-                            chat_id: chat_id,
-                            message_id: thinkingMessage.message_id
-                        });
-                    } catch (e) { /* игнорируем ошибки обновления */ }
-                }, 2000);
+                // Последовательное обновление статуса ДО получения результата
+                await new Promise(resolve => setTimeout(resolve, 1000));
+                await safeEditMessage(bot, '📸 Распознаю блюда на фото...', {
+                    chat_id: chat_id,
+                    message_id: thinkingMessage.message_id
+                });
                 
-                setTimeout(async () => {
-                    try {
-                        await safeEditMessage(bot, '📸 Анализирую состав и калорийность...', {
-                            chat_id: chat_id,
-                            message_id: thinkingMessage.message_id
-                        });
-                    } catch (e) { /* игнорируем ошибки обновления */ }
-                }, 6000);
+                await new Promise(resolve => setTimeout(resolve, 2000));
+                await safeEditMessage(bot, '📸 Анализирую состав и калорийность...', {
+                    chat_id: chat_id,
+                    message_id: thinkingMessage.message_id
+                });
                 
                 const recognitionResult = await recognizeFoodFromPhoto(photoUrl);
 
@@ -7106,7 +7100,7 @@ const setupBot = (app) => {
                         inline_keyboard: [
                             [{ text: 'Похудение', callback_data: 'profile_set_goal_lose_weight' }],
                             [{ text: 'Набор массы', callback_data: 'profile_set_goal_gain_mass' }],
-                            [{ text: 'Поддержание веса', callback_data: 'profile_set_goal_maintain' }],
+                            [{ text: 'Поддержание веса', callback_data: 'profile_set_goal_maintain_weight' }],
                             [{ text: '🔙 Назад к профилю', callback_data: 'profile_menu' }]
                         ]
                     }
@@ -7154,7 +7148,7 @@ const setupBot = (app) => {
                     const goalNames = {
                         'lose_weight': 'Похудение',
                         'gain_mass': 'Набор массы',
-                        'maintain': 'Поддержание веса'
+                        'maintain_weight': 'Поддержание веса'
                     };
                     successMessage = `✅ Цель обновлена на: ${goalNames[value] || value}`;
                 } else if (field === 'timezone') {
