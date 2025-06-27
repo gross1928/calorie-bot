@@ -5194,7 +5194,35 @@ const setupBot = (app) => {
         }
         callbackDebounce[callbackKey] = now;
 
-        const [action, ...params] = data.split('_');
+        // Парсим callback_data с учетом сложных action типов
+        let action, params;
+        
+        if (data.startsWith('profile_edit_') || data.startsWith('profile_set_')) {
+            // Специальная обработка для profile callbacks
+            const parts = data.split('_');
+            if (parts.length >= 3) {
+                action = `${parts[0]}_${parts[1]}`; // profile_edit или profile_set
+                params = parts.slice(2); // остальные параметры
+            } else {
+                action = parts[0];
+                params = parts.slice(1);
+            }
+        } else if (data.startsWith('meal_edit_') || data.startsWith('meal_update_')) {
+            // Специальная обработка для meal callbacks
+            const parts = data.split('_');
+            if (parts.length >= 3) {
+                action = `${parts[0]}_${parts[1]}`; // meal_edit или meal_update
+                params = parts.slice(2); // остальные параметры
+            } else {
+                action = parts[0];
+                params = parts.slice(1);
+            }
+        } else {
+            // Стандартная обработка для остальных callbacks
+            const parts = data.split('_');
+            action = parts[0];
+            params = parts.slice(1);
+        }
         
         console.log(`>>> CALLBACK: User: ${telegram_id}, Data: ${data}, Action: ${action}, Params: ${params}`);
         
