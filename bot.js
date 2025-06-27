@@ -40,13 +40,64 @@ const openai = new OpenAI({ apiKey: openaiApiKey });
 
 // === 🛡️ КРИТИЧЕСКИ ВАЖНЫЕ МОДУЛИ ===
 
-// 🚨 1. ERROR HANDLING & STABILITY
+// 🚫 1. ERROR HANDLING & STABILITY
 const withErrorHandling = async (apiCall, fallbackMessage = 'Сервис временно недоступен. Попробуйте позже.') => {
     try {
         return await apiCall();
     } catch (error) {
         console.error('API Error:', error);
         return { success: false, error: fallbackMessage, details: error.message };
+    }
+};
+
+// 🔧 Безопасный парсинг JSON от OpenAI
+const safeParseJSON = (content, fallbackMessage = 'Ошибка парсинга ответа') => {
+    try {
+        // Очищаем ответ от markdown разметки и лишних символов
+        let jsonString = content.replace(/```json/g, '').replace(/```/g, '').trim();
+        
+        // Проверяем, начинается ли строка с {
+        if (!jsonString.startsWith('{')) {
+            // Ищем JSON в тексте
+            const jsonMatch = jsonString.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+                jsonString = jsonMatch[0];
+            } else {
+                console.error('No JSON found in response:', content.substring(0, 200));
+                return { success: false, error: fallbackMessage };
+            }
+        }
+        
+        const parsed = JSON.parse(jsonString);
+        return { success: true, data: parsed };
+    } catch (error) {
+        console.error('JSON parsing error:', error.message);
+        console.error('Content that failed to parse:', content.substring(0, 500));
+        return { success: false, error: fallbackMessage };
+    }
+};
+
+// 🔧 Безопасное редактирование сообщений
+const safeEditMessage = async (bot, text, options) => {
+    try {
+        if (!options.message_id || options.message_id === undefined) {
+            console.warn('Attempting to edit message without message_id, sending new message instead');
+            return await bot.sendMessage(options.chat_id, text, { 
+                parse_mode: options.parse_mode,
+                reply_markup: options.reply_markup 
+            });
+        }
+        return await bot.editMessageText(text, options);
+    } catch (error) {
+        if (error.message.includes('message to edit not found') || error.message.includes('message is not modified')) {
+            // Если сообщение не найдено или уже такое же, отправляем новое
+            console.warn('Message not found for editing, sending new message');
+            return await bot.sendMessage(options.chat_id, text, { 
+                parse_mode: options.parse_mode,
+                reply_markup: options.reply_markup 
+            });
+        }
+        throw error; // Перебрасываем другие ошибки
     }
 };
 
@@ -559,8 +610,14 @@ const recognizeFoodFromText = async (inputText) => {
         }), 15000);
 
         const content = response.choices[0].message.content;
-        const jsonString = content.replace(/```json/g, '').replace(/```/g, '').trim();
-        const parsedContent = JSON.parse(jsonString);
+        const parseResult = safeParseJSON(content);
+
+        if (!parseResult.success) {
+            logEvent('warn', 'Non-food text detected', { input: inputText });
+            return { success: false, reason: 'Не удалось распознать еду в вашем описании.' };
+        }
+
+        const parsedContent = parseResult.data;
 
         if (parsedContent.dish_name === 'не еда') {
             logEvent('warn', 'Non-food text detected', { input: inputText });
@@ -1287,8 +1344,14 @@ const recognizeFoodFromPhoto = async (photoUrl) => {
         }), 20000);
 
         const content = response.choices[0].message.content;
-        const jsonString = content.replace(/```json/g, '').replace(/```/g, '').trim();
-        const parsedContent = JSON.parse(jsonString);
+        const parseResult = safeParseJSON(content);
+
+        if (!parseResult.success) {
+            logEvent('warn', 'Non-food photo detected', { photoUrl });
+            return { success: false, reason: 'На фото не удалось распознать еду.' };
+        }
+
+        const parsedContent = parseResult.data;
 
         if (parsedContent.dish_name === 'не еда') {
             logEvent('warn', 'Non-food photo detected', { photoUrl });
@@ -1423,10 +1486,13 @@ ${profileData.timeframe_months ? `- Срок достижения цели: ${pr
         });
 
         const content = response.choices[0].message.content;
-        const jsonString = content.replace(/```json/g, '').replace(/```/g, '').trim();
-        const parsedContent = JSON.parse(jsonString);
+        const parseResult = safeParseJSON(content);
 
-        return { success: true, data: parsedContent };
+        if (!parseResult.success) {
+            return { success: false, reason: 'Ошибка при обработке сообщения' };
+        }
+
+        return { success: true, data: parseResult.data };
 
     } catch (error) {
         console.error('Error processing universal message:', error);
@@ -1467,10 +1533,13 @@ const analyzeMedicalData = async (medicalText, profileData = null) => {
         });
 
         const content = response.choices[0].message.content;
-        const jsonString = content.replace(/```json/g, '').replace(/```/g, '').trim();
-        const parsedContent = JSON.parse(jsonString);
+        const parseResult = safeParseJSON(content);
 
-        return { success: true, data: parsedContent };
+        if (!parseResult.success) {
+            return { success: false, reason: 'Ошибка при анализе медицинских данных' };
+        }
+
+        return { success: true, data: parseResult.data };
 
     } catch (error) {
         console.error('Error analyzing medical data:', error);
@@ -1921,8 +1990,14 @@ const generateWeeklyChallenge = async () => {
         }), 15000);
 
         const content = response.choices[0].message.content;
-        const jsonString = content.replace(/```json/g, '').replace(/```/g, '').trim();
-        const challengeData = JSON.parse(jsonString);
+        const parseResult = safeParseJSON(content);
+
+        if (!parseResult.success) {
+            console.error('Failed to parse weekly challenge JSON');
+            return null;
+        }
+
+        const challengeData = parseResult.data;
 
         logEvent('info', 'Weekly challenge generated', { title: challengeData.title });
         return { success: true, data: challengeData };
@@ -3808,18 +3883,18 @@ const setupBot = (app) => {
                 // Постепенное обновление статуса
                 setTimeout(async () => {
                     try {
-                        await bot.editMessageText('📸 Распознаю блюда на фото...', {
+                        await safeEditMessage(bot, '📸 Распознаю блюда на фото...', {
                             chat_id: chat_id,
-                            message_id: undefined
+                            message_id: thinkingMessage.message_id
                         });
                     } catch (e) { /* игнорируем ошибки обновления */ }
                 }, 2000);
                 
                 setTimeout(async () => {
                     try {
-                        await bot.editMessageText('📸 Анализирую состав и калорийность...', {
+                        await safeEditMessage(bot, '📸 Анализирую состав и калорийность...', {
                             chat_id: chat_id,
-                            message_id: undefined
+                            message_id: thinkingMessage.message_id
                         });
                     } catch (e) { /* игнорируем ошибки обновления */ }
                 }, 6000);
@@ -3835,7 +3910,7 @@ const setupBot = (app) => {
 
                     const responseText = `*${mealData.dish_name}* (Примерно ${mealData.weight_g} г)\n\n*Ингредиенты:* ${ingredientsString}\n*КБЖУ:*\n- Калории: ${mealData.calories} ккал\n- Белки: ${mealData.protein} г\n- Жиры: ${mealData.fat} г\n- Углеводы: ${mealData.carbs} г\n\nНажмите "Сохранить" или внесите правки.`;
 
-                    await bot.editMessageText(responseText, {
+                    await safeEditMessage(bot, responseText, {
                         chat_id: chat_id,
                         message_id: thinkingMessage.message_id,
                         parse_mode: 'Markdown',
@@ -3852,16 +3927,16 @@ const setupBot = (app) => {
                         }
                     });
                 } else {
-                     await bot.editMessageText(`😕 ${recognitionResult.reason}`, {
+                     await safeEditMessage(bot, `😕 ${recognitionResult.reason}`, {
                         chat_id: chat_id,
-                        message_id: undefined
+                        message_id: thinkingMessage.message_id
                     });
                 }
             } catch (error) {
                 console.error("Ошибка при обработке фото:", error);
-                await bot.editMessageText('Произошла внутренняя ошибка. Не удалось обработать фото.', {
+                await safeEditMessage(bot, 'Произошла внутренняя ошибка. Не удалось обработать фото.', {
                     chat_id: chat_id,
-                    message_id: undefined
+                    message_id: thinkingMessage.message_id
                 });
             }
             return;
@@ -4259,7 +4334,7 @@ const setupBot = (app) => {
                     const confirmationId = crypto.randomUUID();
                     mealConfirmationCache[confirmationId] = { ...mealData, meal_type: 'photo', telegram_id };
                     
-                    await bot.editMessageText(newText, {
+                    await safeEditMessage(bot, newText, {
                         chat_id: chat_id,
                         message_id: message_id,
                         parse_mode: 'Markdown',
@@ -4275,7 +4350,7 @@ const setupBot = (app) => {
                      await bot.deleteMessage(chat_id, statusMsg.message_id); // Удаляем статусное сообщение
 
                 } else {
-                    await bot.editMessageText('❌ Не удалось пересчитать КБЖУ. Попробуйте снова.', {
+                    await safeEditMessage(bot, '❌ Не удалось пересчитать КБЖУ. Попробуйте снова.', {
                         chat_id: chat_id,
                         message_id: message_id
                     });
@@ -4304,7 +4379,7 @@ const setupBot = (app) => {
                                     `- Жиры: ${mealData.fat} г\n` +
                                     `- Углеводы: ${mealData.carbs} г\n`;
 
-                    await bot.editMessageText(newText, {
+                    await safeEditMessage(bot, newText, {
                         chat_id: chat_id,
                         message_id: message_id,
                         parse_mode: 'Markdown',
@@ -4319,7 +4394,7 @@ const setupBot = (app) => {
                     });
                     await bot.deleteMessage(chat_id, statusMsg.message_id);
                 } else {
-                     await bot.editMessageText('❌ Не удалось распознать новые продукты. Попробуйте сформулировать иначе.', {
+                     await safeEditMessage(bot, '❌ Не удалось распознать новые продукты. Попробуйте сформулировать иначе.', {
                         chat_id: chat_id,
                         message_id: message_id
                     });
