@@ -4352,18 +4352,32 @@ const setupBot = (app) => {
 
             } else if (stage === 'waiting_for_ingredients') {
                 const newIngredients = msg.text.trim();
+                const oldConfirmationId = ingredientEdit.confirmationId;
+                const oldMealData = mealConfirmationCache[oldConfirmationId];
                 
                 // Удаляем состояние
                 delete ingredientEditState[telegram_id];
+
+                if (!oldMealData) {
+                    await smartSendMessage(chat_id, '❌ Сессия редактирования истекла. Попробуйте заново.');
+                    return;
+                }
 
                 const statusMsg = await smartSendMessage(chat_id, '🥑 Обновляю список продуктов и пересчитываю КБЖУ...');
 
                 const newFoodData = await recognizeFoodFromText(newIngredients);
 
-                 if (newFoodData.success) {
+                if (newFoodData.success) {
                     const mealData = newFoodData.data;
-                    const confirmationId = crypto.randomUUID();
-                    mealConfirmationCache[confirmationId] = { ...mealData, meal_type: 'photo', telegram_id, timestamp: Date.now() };
+                    
+                    // Обновляем существующий кэш с новыми данными, но сохраняем старый confirmationId
+                    mealConfirmationCache[oldConfirmationId] = { 
+                        ...oldMealData, // Сохраняем оригинальные данные
+                        ...mealData, // Обновляем КБЖУ и ингредиенты
+                        meal_type: oldMealData.meal_type, // Сохраняем оригинальный тип
+                        telegram_id: oldMealData.telegram_id,
+                        timestamp: Date.now() 
+                    };
 
                     const newText = `✅ *Продукты обновлены для "${mealData.dish_name}"*\n\n` +
                                     `Продукты:\n- ${mealData.ingredients.join('\n- ')}\n\n` +
@@ -4379,10 +4393,10 @@ const setupBot = (app) => {
                         parse_mode: 'Markdown',
                         reply_markup: {
                            inline_keyboard: [
-                                [{ text: '✅ Сохранить', callback_data: `meal_confirm_${confirmationId}` }],
-                                [{ text: '✏️ Править граммы', callback_data: `edit_grams_${photo_message_id}` }],
-                                [{ text: '🥑 Править продукты', callback_data: `edit_ingredients_${photo_message_id}` }],
-                                [{ text: '❌ Не сохранять', callback_data: `meal_cancel_${confirmationId}` }]
+                                [{ text: '✅ Сохранить', callback_data: `meal_confirm_${oldConfirmationId}` }],
+                                [{ text: '✏️ Изменить граммы', callback_data: `meal_edit_grams_${oldConfirmationId}` }],
+                                [{ text: '🥑 Изменить ингредиенты', callback_data: `meal_edit_ingredients_${oldConfirmationId}` }],
+                                [{ text: '❌ Не сохранять', callback_data: `meal_cancel_${oldConfirmationId}` }]
                             ]
                         }
                     });
@@ -4392,6 +4406,7 @@ const setupBot = (app) => {
                         chat_id: chat_id,
                         message_id: message_id
                     });
+                    await bot.deleteMessage(chat_id, statusMsg.message_id);
                 }
             }
             return; // Важно, чтобы прервать дальнейшую обработку
@@ -6454,9 +6469,9 @@ const setupBot = (app) => {
                 return;
             }
 
-            // Set state for ingredient editing
+            // Set state for ingredient editing - исправляем структуру
             ingredientEditState[telegram_id] = { 
-                waiting: true, 
+                stage: 'waiting_for_ingredients',
                 confirmationId: confirmationId,
                 message_id: msg.message_id
             };
@@ -7147,6 +7162,11 @@ const setupBot = (app) => {
                     updateData.gender = value;
                     successMessage = `✅ Пол обновлен на: ${value === 'male' ? 'Мужской' : 'Женский'}`;
                 } else if (field === 'goal') {
+                    // Проверяем валидность значения цели перед записью в БД
+                    const validGoals = ['lose_weight', 'maintain_weight', 'gain_mass'];
+                    if (!validGoals.includes(value)) {
+                        throw new Error(`Invalid goal value: ${value}. Valid values: ${validGoals.join(', ')}`);
+                    }
                     updateData.goal = value;
                     const goalNames = {
                         'lose_weight': 'Похудение',
@@ -7199,7 +7219,13 @@ const setupBot = (app) => {
                 });
                 
             } catch (error) {
-                console.error('Error updating profile field:', error);
+                console.error('Error updating profile field:', {
+                    error: error.message,
+                    field: field,
+                    value: value,
+                    updateData: updateData,
+                    telegram_id: telegram_id
+                });
                 await bot.editMessageText('❌ Произошла ошибка при обновлении профиля. Попробуйте позже.', {
                     chat_id: chat_id,
                     message_id: msg.message_id,
