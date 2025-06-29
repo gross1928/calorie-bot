@@ -5206,16 +5206,28 @@ const setupBot = (app) => {
         // Парсим callback_data с учетом сложных action типов
         let action, params;
         
-        if (data.startsWith('profile_edit_') || data.startsWith('profile_set_')) {
+        if (data.startsWith('profile_edit_') || data.startsWith('profile_set_') || data === 'profile_menu') {
             // Специальная обработка для profile callbacks
-            const parts = data.split('_');
-            if (parts.length >= 3) {
-                action = `${parts[0]}_${parts[1]}`; // profile_edit или profile_set
-                params = parts.slice(2); // остальные параметры
+            if (data === 'profile_menu') {
+                action = 'profile_menu';
+                params = [];
             } else {
-                action = parts[0];
-                params = parts.slice(1);
+                const parts = data.split('_');
+                if (parts.length >= 3) {
+                    action = `${parts[0]}_${parts[1]}`; // profile_edit или profile_set
+                    params = parts.slice(2); // остальные параметры
+                } else {
+                    action = parts[0];
+                    params = parts.slice(1);
+                }
             }
+        } else if (data === 'main_menu' || data === 'back_to_main_menu' || 
+                   data === 'activate_promo' || data === 'subscription_plans' ||
+                   data === 'show_subscription_plans' || data === 'activate_demo' ||
+                   data === 'subscribe_progress' || data === 'subscribe_ultra') {
+            // Специальная обработка для простых callback без подчеркиваний
+            action = data;
+            params = [];
         } else if (data.startsWith('meal_edit_') || data.startsWith('meal_update_') || data.startsWith('register_')) {
             // Специальная обработка для meal callbacks и регистрации
             const parts = data.split('_');
@@ -7251,6 +7263,108 @@ const setupBot = (app) => {
                 // Игнорируем ошибку если сообщение уже удалено
             }
             showProfileMenu(chat_id, telegram_id);
+            return;
+        }
+
+        // --- Main Menu Callbacks ---
+        if (action === 'main_menu' || action === 'back_to_main_menu') {
+            await bot.answerCallbackQuery(callbackQuery.id);
+            closeConflictingStates(telegram_id, 'main_menu');
+            
+            // Удаляем текущее сообщение и показываем главное меню
+            try {
+                await bot.deleteMessage(chat_id, msg.message_id);
+            } catch (error) {
+                // Игнорируем ошибку если сообщение уже удалено
+            }
+            showMainMenu(chat_id, 'Добро пожаловать в главное меню! 🏠');
+            return;
+        }
+
+        // --- Activate Promo Callback ---
+        if (action === 'activate_promo') {
+            await bot.answerCallbackQuery(callbackQuery.id);
+            
+            const subscription = await getUserSubscription(telegram_id);
+            if (subscription.tier !== 'free') {
+                await bot.editMessageText('У вас уже есть активная подписка! 😊', {
+                    chat_id, message_id: msg.message_id
+                });
+                return;
+            }
+
+            // Проверяем, не использовал ли уже пользователь промо
+            if (subscription.promo_expires_at) {
+                await bot.editMessageText('Промо-период можно использовать только один раз 😔\n\nВыберите платную подписку для продолжения использования премиум функций.', {
+                    chat_id, message_id: msg.message_id,
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: '📋 Посмотреть тарифы', callback_data: 'subscription_plans' }]
+                        ]
+                    }
+                });
+                return;
+            }
+
+            // Активируем промо
+            const result = await activatePromo(telegram_id);
+            if (result.success) {
+                await bot.editMessageText('🎉 *Промо-период активирован на 3 дня!*\n\n✨ Теперь вам доступны:\n• 15 фото в день\n• 20 AI вопросов в день\n• 15 ручных записей еды в день\n• 3 голосовых сообщения в день\n• 1 план питания в месяц\n• Статистика за день и неделю\n• Ежедневные VIP отчеты\n\nПриятного использования!', {
+                    chat_id, message_id: msg.message_id,
+                    parse_mode: 'Markdown'
+                });
+            } else {
+                await bot.editMessageText(`❌ Ошибка активации: ${result.error}`, {
+                    chat_id, message_id: msg.message_id
+                });
+            }
+            return;
+        }
+
+        // --- Subscription Plans Callback ---
+        if (action === 'subscription_plans') {
+            await bot.answerCallbackQuery(callbackQuery.id);
+            
+            const subscriptionText = `💎 **ТАРИФНЫЕ ПЛАНЫ**\n\n` +
+                `🆓 **БЕСПЛАТНЫЙ**\n` +
+                `• 2 фото в день\n` +
+                `• 5 AI вопросов в день\n` +
+                `• 5 ручных записей еды в день\n` +
+                `• Статистика только за сегодня\n\n` +
+                
+                `⭐ **ПРОМО (3 дня бесплатно)**\n` +
+                `• 15 фото в день\n` +
+                `• 20 AI вопросов в день\n` +
+                `• 15 ручных записей еды в день\n` +
+                `• 3 голосовых сообщения в день\n` +
+                `• 1 план питания в месяц\n` +
+                `• Статистика за день и неделю\n` +
+                `• Ежедневные VIP отчеты\n\n` +
+                
+                `🚀 **ПРОГРЕСС** - 199₽/мес\n` +
+                `• Безлимитные фото и AI\n` +
+                `• Безлимитные ручные записи\n` +
+                `• Безлимитные планы тренировок и питания\n` +
+                `• Полная статистика\n` +
+                `• Ежедневные отчеты\n\n` +
+                
+                `👑 **УЛЬТРА** - 349₽/мес\n` +
+                `• Всё из тарифа ПРОГРЕСС\n` +
+                `• Голосовые сообщения\n` +
+                `• Анализ медицинских данных\n` +
+                `• Еженедельные VIP отчеты с детальными рекомендациями\n`;
+
+            await bot.editMessageText(subscriptionText, {
+                chat_id, message_id: msg.message_id,
+                parse_mode: 'Markdown',
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: '🎁 ПРОМО НА 3 ДНЯ', callback_data: 'activate_promo' }],
+                        [{ text: '🚀 ПРОГРЕСС 199₽/мес', callback_data: 'subscribe_progress' }],
+                        [{ text: '👑 УЛЬТРА 349₽/мес', callback_data: 'subscribe_ultra' }]
+                    ]
+                }
+            });
             return;
         }
 
