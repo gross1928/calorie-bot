@@ -4013,7 +4013,19 @@ const setupBot = (app) => {
                                         parse_mode: 'Markdown',
                                         reply_markup: {
                                             inline_keyboard: [
-                                                [{ text: '✅ Да, сохранить', callback_data }, { text: '❌ Нет, отменить', callback_data: cancel_callback_data }]
+                                                [
+                                                    { text: '✅ Да, сохранить', callback_data }
+                                                ],
+                                                [
+                                                    { text: '⚖️ Изменить граммы', callback_data: `meal_edit_grams_${confirmationId}` },
+                                                    { text: '✏️ Изменить ингредиенты', callback_data: `meal_edit_ingredients_${confirmationId}` }
+                                                ],
+                                                [
+                                                    { text: '🔢 Изменить КБЖУ', callback_data: `meal_edit_kbju_${confirmationId}` }
+                                                ],
+                                                [
+                                                    { text: '❌ Отменить', callback_data: cancel_callback_data }
+                                                ]
                                             ]
                                         }
                                     });
@@ -5071,7 +5083,19 @@ const setupBot = (app) => {
                                     parse_mode: 'Markdown',
                                     reply_markup: {
                                         inline_keyboard: [
-                                            [{ text: '✅ Да, сохранить', callback_data }, { text: '❌ Нет, отменить', callback_data: cancel_callback_data }]
+                                            [
+                                                { text: '✅ Да, сохранить', callback_data }
+                                            ],
+                                            [
+                                                { text: '⚖️ Изменить граммы', callback_data: `meal_edit_grams_${confirmationId}` },
+                                                { text: '✏️ Изменить ингредиенты', callback_data: `meal_edit_ingredients_${confirmationId}` }
+                                            ],
+                                            [
+                                                { text: '🔢 Изменить КБЖУ', callback_data: `meal_edit_kbju_${confirmationId}` }
+                                            ],
+                                            [
+                                                { text: '❌ Отменить', callback_data: cancel_callback_data }
+                                            ]
                                         ]
                                     }
                                 });
