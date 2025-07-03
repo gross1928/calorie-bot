@@ -278,6 +278,7 @@ const clearUserStates = (telegram_id) => {
     delete questionState[telegram_id];
     delete medicalAnalysisState[telegram_id];
     delete ingredientEditState[telegram_id];
+    delete kbjuEditState[telegram_id];
 };
 
 // Умная очистка состояний - закрывает только конфликтующие операции
@@ -359,6 +360,30 @@ const closeConflictingStates = (telegram_id, currentOperation) => {
             delete challengeStepsState[telegram_id];
             delete questionState[telegram_id];
             delete medicalAnalysisState[telegram_id];
+            break;
+            
+        case 'ingredient_edit':
+            // Закрываем конфликтующие состояния при редактировании ингредиентов
+            delete workoutPlanState[telegram_id];
+            delete nutritionPlanState[telegram_id];
+            delete manualAddState[telegram_id];
+            delete waterInputState[telegram_id];
+            delete challengeStepsState[telegram_id];
+            delete questionState[telegram_id];
+            delete medicalAnalysisState[telegram_id];
+            delete kbjuEditState[telegram_id]; // Нельзя одновременно редактировать КБЖУ и ингредиенты
+            break;
+            
+        case 'kbju_edit':
+            // Закрываем конфликтующие состояния при редактировании КБЖУ
+            delete workoutPlanState[telegram_id];
+            delete nutritionPlanState[telegram_id];
+            delete manualAddState[telegram_id];
+            delete waterInputState[telegram_id];
+            delete challengeStepsState[telegram_id];
+            delete questionState[telegram_id];
+            delete medicalAnalysisState[telegram_id];
+            delete ingredientEditState[telegram_id]; // Нельзя одновременно редактировать ингредиенты и КБЖУ
             break;
             
         case 'profile_menu':
@@ -1235,6 +1260,7 @@ const registrationState = {};
 const manualAddState = {};
 const mealConfirmationCache = {};
 const ingredientEditState = {};
+const kbjuEditState = {};
 const workoutPlanState = {};
 const nutritionPlanState = {};
 const waterInputState = {};
@@ -3916,6 +3942,9 @@ const setupBot = (app) => {
                                 [
                                     { text: '⚖️ Изменить граммы', callback_data: `meal_edit_grams_${confirmationId}` },
                                     { text: '✏️ Изменить ингредиенты', callback_data: `meal_edit_ingredients_${confirmationId}` }
+                                ],
+                                [
+                                    { text: '🔢 Изменить КБЖУ', callback_data: `meal_edit_kbju_${confirmationId}` }
                                 ]
                             ]
                         }
@@ -4284,7 +4313,8 @@ const setupBot = (app) => {
         const isWaitingForSteps = challengeStepsState[telegram_id]?.waiting;
         const isEditingProfile = profileEditState[telegram_id]?.field;
         const isWaitingForInjuryDetails = workoutInjuryState[telegram_id]?.waiting;
-        const ingredientEdit = ingredientEditState[telegram_id]; 
+        const ingredientEdit = ingredientEditState[telegram_id];
+        const kbjuEdit = kbjuEditState[telegram_id]; 
 
         // <<< НАЧАЛО БЛОКА ОБРАБОТКИ РЕДАКТИРОВАНИЯ >>>
         if (ingredientEdit) {
@@ -4396,6 +4426,7 @@ const setupBot = (app) => {
                                 [{ text: '✅ Сохранить', callback_data: `meal_confirm_${oldConfirmationId}` }],
                                 [{ text: '✏️ Изменить граммы', callback_data: `meal_edit_grams_${oldConfirmationId}` }],
                                 [{ text: '🥑 Изменить ингредиенты', callback_data: `meal_edit_ingredients_${oldConfirmationId}` }],
+                                [{ text: '🔢 Изменить КБЖУ', callback_data: `meal_edit_kbju_${oldConfirmationId}` }],
                                 [{ text: '❌ Не сохранять', callback_data: `meal_cancel_${oldConfirmationId}` }]
                             ]
                         }
@@ -4410,6 +4441,79 @@ const setupBot = (app) => {
                 }
             }
             return; // Важно, чтобы прервать дальнейшую обработку
+        }
+
+        // Обработка редактирования КБЖУ
+        if (kbjuEdit) {
+            const { stage, confirmationId, message_id } = kbjuEdit;
+
+            if (stage === 'waiting_for_kbju') {
+                // Удаляем состояние
+                delete kbjuEditState[telegram_id];
+
+                const oldMealData = mealConfirmationCache[confirmationId];
+                if (!oldMealData) {
+                    await smartSendMessage(chat_id, '❌ Сессия редактирования истекла. Попробуйте заново.');
+                    return;
+                }
+
+                // Парсим введенные пользователем данные КБЖУ
+                const parts = msg.text.trim().split(/[\s,;\/]+/);
+                if (parts.length !== 4) {
+                    await smartSendMessage(chat_id, '❌ Неверный формат. Введите КБЖУ в формате:\n`калории белки жиры углеводы`\n\nНапример: `250 15 8 30`');
+                    return;
+                }
+
+                const [calories, protein, fat, carbs] = parts.map(p => parseFloat(p.replace(',', '.')));
+                
+                // Валидация
+                if (calories < 0 || calories > 3000 || isNaN(calories) ||
+                    protein < 0 || protein > 200 || isNaN(protein) ||
+                    fat < 0 || fat > 200 || isNaN(fat) ||
+                    carbs < 0 || carbs > 500 || isNaN(carbs)) {
+                    await smartSendMessage(chat_id, '❌ Некорректные значения КБЖУ. Пожалуйста, проверьте:\n• Калории: 0-3000 ккал\n• Белки: 0-200 г\n• Жиры: 0-200 г\n• Углеводы: 0-500 г');
+                    return;
+                }
+
+                const statusMsg = await smartSendMessage(chat_id, '🔢 Обновляю КБЖУ...');
+
+                // Обновляем данные в кеше
+                mealConfirmationCache[confirmationId] = {
+                    ...oldMealData,
+                    calories: Math.round(calories),
+                    protein: Math.round(protein),
+                    fat: Math.round(fat),
+                    carbs: Math.round(carbs),
+                    timestamp: Date.now()
+                };
+
+                const updatedMealData = mealConfirmationCache[confirmationId];
+                const ingredientsString = updatedMealData.ingredients.join(', ');
+
+                const newText = `✅ *КБЖУ обновлено для "${updatedMealData.dish_name}"*\n\n*Ингредиенты:* ${ingredientsString}\n*Обновленные КБЖУ:*\n- Калории: ${updatedMealData.calories} ккал\n- Белки: ${updatedMealData.protein} г\n- Жиры: ${updatedMealData.fat} г\n- Углеводы: ${updatedMealData.carbs} г\n\nТеперь данные соответствуют вашим указаниям.`;
+
+                await safeEditMessage(bot, newText, {
+                    chat_id: chat_id,
+                    message_id: message_id,
+                    parse_mode: 'Markdown',
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: '✅ Сохранить', callback_data: `meal_confirm_${confirmationId}` }],
+                            [
+                                { text: '⚖️ Изменить граммы', callback_data: `meal_edit_grams_${confirmationId}` },
+                                { text: '✏️ Изменить ингредиенты', callback_data: `meal_edit_ingredients_${confirmationId}` }
+                            ],
+                            [
+                                { text: '🔢 Изменить КБЖУ', callback_data: `meal_edit_kbju_${confirmationId}` }
+                            ],
+                            [{ text: '❌ Не сохранять', callback_data: `meal_cancel_${confirmationId}` }]
+                        ]
+                    }
+                });
+                
+                await bot.deleteMessage(chat_id, statusMsg.message_id);
+            }
+            return;
         }
         // <<< КОНЕЦ БЛОКА ОБРАБОТКИ РЕДАКТИРОВАНИЯ >>>
 
@@ -4718,6 +4822,9 @@ const setupBot = (app) => {
                                 [
                                     { text: '⚖️ Изменить граммы', callback_data: `meal_edit_grams_${confirmationId}` },
                                     { text: '✏️ Изменить ингредиенты', callback_data: `meal_edit_ingredients_${confirmationId}` }
+                                ],
+                                [
+                                    { text: '🔢 Изменить КБЖУ', callback_data: `meal_edit_kbju_${confirmationId}` }
                                 ],
                                 [
                                     { text: '❌ Отменить', callback_data: cancel_callback_data }
@@ -6490,6 +6597,37 @@ const setupBot = (app) => {
 
             const currentIngredients = mealData.ingredients.join(', ');
             await bot.editMessageText(`Текущие ингредиенты: *${currentIngredients}*.\n\n✏️ Введите новый список ингредиентов через запятую.\n\n*Пример: куриная грудка, рис, брокколи, оливковое масло*`, {
+                chat_id,
+                message_id: msg.message_id,
+                parse_mode: 'Markdown'
+            });
+            return;
+        }
+
+        if (action === 'meal_edit_kbju') {
+            const confirmationId = params[0];
+            await bot.answerCallbackQuery(callbackQuery.id);
+
+            const mealData = mealConfirmationCache[confirmationId];
+            if (!mealData) {
+                await bot.editMessageText('🤔 Эта сессия редактирования устарела. Пожалуйста, попробуйте добавить еду заново.', {
+                    chat_id, message_id: msg.message_id, reply_markup: null
+                });
+                return;
+            }
+
+            // Закрываем конфликтующие состояния
+            closeConflictingStates(telegram_id, 'kbju_edit');
+            
+            // Устанавливаем состояние для редактирования КБЖУ
+            kbjuEditState[telegram_id] = { 
+                stage: 'waiting_for_kbju',
+                confirmationId: confirmationId,
+                message_id: msg.message_id
+            };
+
+            const currentKbju = `${mealData.calories} ${mealData.protein} ${mealData.fat} ${mealData.carbs}`;
+            await bot.editMessageText(`Текущие КБЖУ: *${mealData.calories} ккал, ${mealData.protein} г белков, ${mealData.fat} г жиров, ${mealData.carbs} г углеводов*.\n\n🔢 Введите новые значения КБЖУ через пробел или запятую.\n\n*Формат:* калории белки жиры углеводы\n*Пример:* \`250 15 8 30\``, {
                 chat_id,
                 message_id: msg.message_id,
                 parse_mode: 'Markdown'
